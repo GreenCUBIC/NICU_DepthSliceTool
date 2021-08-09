@@ -11,15 +11,13 @@ import cv2
 import datetime
 import copy
 import sys
-import pickle
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 
-windowName = "depthSlide-slider"
+windowName = "DepthSlice Tool"
 slider1Name = "Slice depth (increments of 0.001)"
 slider2Name = "Slice start (increments of 0.001)"
 switchName = "0: Play\n1: Pause"
-seekName = "Timestamp"
 
 # Create pipeline
 pipeline = rs.pipeline()
@@ -27,8 +25,15 @@ pipeline = rs.pipeline()
 # Create a config object
 config = rs.config()
 
-Tk().withdraw()
-filename = askopenfilename(filetypes=[("Bag files", ".bag")])
+root = Tk()
+root.withdraw()
+root.overrideredirect(True)
+root.geometry('0x0+0+0')
+root.deiconify()
+root.lift()
+root.focus_force()
+filename = askopenfilename(filetypes=[("Bag files", ".bag")], parent=root)
+root.destroy()
 if not filename:
     sys.exit("No file selected")
 
@@ -46,11 +51,11 @@ device = pipeline_prof.get_device()
 
 playback = device.as_playback()
 
+playback.seek(datetime.timedelta(seconds=32))
+
 duration = playback.get_duration()
 
 align = rs.align(rs.stream.color)
-
-print(align.get_supported_options())
 
 slider1Arg = 0
 slider2Arg = 0
@@ -58,6 +63,17 @@ slice1At = 0
 slice2At = 0
 savedFrame = None
 isPaused = False
+depthSelectEnabled = False
+depthPoint = []
+
+def toggleDepthSelect(*args):
+    global depthSelectEnabled
+    depthSelectEnabled = not depthSelectEnabled
+
+def mouseEvent(action, x, y, flags, *userdata):
+    global depthPoint, depthSelectEnabled
+    if action == cv2.EVENT_LBUTTONDBLCLK and depthSelectEnabled:
+        depthPoint.append((x, y))
 
 def updateFrame(arg):
     # Get value of slider
@@ -84,9 +100,11 @@ def playPause(arg):
     
 # Create opencv window to render image in
 cv2.namedWindow(windowName, cv2.WINDOW_AUTOSIZE)
-cv2.createTrackbar(slider1Name, windowName, 15, 500, updateFrame)
-cv2.createTrackbar(slider2Name, windowName, 0, 1000, updateFrame)
+cv2.createTrackbar(slider1Name, windowName, 15, 1000, updateFrame)
+cv2.createTrackbar(slider2Name, windowName, 0, 1500, updateFrame)
 cv2.createTrackbar(switchName, windowName, 0, 1, playPause)
+cv2.setMouseCallback(windowName, mouseEvent)
+cv2.createButton("Toggle Depth Selector", toggleDepthSelect, None, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR, 1)
 
 frames = pipeline.wait_for_frames()
 # Streaming loop
@@ -102,9 +120,7 @@ while True:
     color_frame = aligned_frames.get_color_frame()
     if not depth_frame or not color_frame:
         continue
-    
-    print(color_frame.get_timestamp())
-    
+        
     scaling_factor = depth_frame.get_units()
         
     np_depth_frame = np.asanyarray(depth_frame.get_data())
@@ -130,8 +146,21 @@ while True:
     
     slider1Arg, slice1At, slider2Arg, slice2At = updateFrame(0)
     
+    finalImage = np_color_frame_masked.copy()
+    
+    for point in depthPoint:
+        depth = np_depth_frame_scaled[point[1], point[0]].astype(str)
+        cv2.putText(finalImage,
+                    depth,
+                    point, 
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=0.3,
+                    color=(255,255,255),
+                    )
+        # print("x: " + str(point[0]) + " y: " + str(point[1]) + " Depth: " + depth)
+    
     # Render image in opencv window
-    cv2.imshow(windowName, np_color_frame_masked)
+    cv2.imshow(windowName, finalImage)
     
     key = cv2.waitKey(1)
     # if pressed ESCAPE exit program

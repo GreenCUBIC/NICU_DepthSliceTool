@@ -18,7 +18,7 @@ pipeline = rs.pipeline()
 config = rs.config()
 
 # Tell config that we will use a recorded device from file to be used by the pipeline through playback.
-rs.config.enable_device_from_file(config, "Z:\Patient_28\Video_Data\Pt_28_1.bag")
+config.enable_device_from_file("Z:\Patient_28\Video_Data\Pt_28_1.bag")
 
 # Change this parameters according to the recorded bag file resolution
 config.enable_stream(rs.stream.depth)
@@ -26,6 +26,10 @@ config.enable_stream(rs.stream.color)
 
 # Start streaming from file
 pipeline_prof = pipeline.start(config)
+
+playback = pipeline_prof.get_device().as_playback()
+
+playback.set_real_time(False)
 
 align = rs.align(rs.stream.color)
 
