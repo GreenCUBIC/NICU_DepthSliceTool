@@ -212,9 +212,9 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
     fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
     fulcrumPixelDepth = fulcrumPoint[2] * scaling_factor
     
-    contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, headSpheres = crossSections(np_final_frame, fulcrumPixelDepth)
+    contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, largestHeadSphere = crossSections(np_final_frame, fulcrumPixelDepth)
     
-    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, headSpheres
+    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, largestHeadSphere
     # return np_final_frame
 
 def crossSections(np_depth_frame, fulcrumPixelDepth):
@@ -238,6 +238,7 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
         cross_section_frames.append(np_depth_frame_mask)        
         sliceDepth = sliceDepth + sliceInc
         
+    # Find contours for each slice and filter to different criteria
     allContours = []
     allContours_area = []
     allContours_circularity = []
@@ -259,7 +260,7 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
             if perimeter == 0:
                 break
             circularity = 4*math.pi*(area/(perimeter*perimeter))
-            if 0.6 < circularity < 1.4:
+            if 0.65 < circularity < 1.35:
                 contours_filteredCircularity.append(con)
                 
         contours_filteredRectangularity = []
@@ -279,9 +280,10 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
         print("Contours (after circle filter): {}".format(len(contours_filteredCircularity)))
         print("Contours (after rectangularity): {}".format(len(contours_filteredRectangularity)))
         
-    # Find head sphere
+    # Find head sphere contours
     headSpheres = []
     checkedContours = []
+    checkedIds = []
     
     def buildSphere(child, i, sphereList):
         sphereList.append(child)
@@ -291,14 +293,12 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
         cY = int(M["m01"] / M["m00"])
         
         for parent in allContours_circularity[i]:
-            print(type(parent))
-            print(type(checkedContours))
-            print(len(parent))
-            print(len(checkedContours))
-            if not (parent in checkedContours):
+            if not (id(parent) in checkedIds):
                 checkedContours.append(checkedContours)
+                ids = map(id, checkedContours)
             if (cv2.pointPolygonTest(parent, (cX, cY), True) >= 0):
-                sphereList = buildSphere(parent, i+1, sphereList)
+                if i+1 < len(allContours_circularity):
+                    sphereList = buildSphere(parent, i+1, sphereList)
                 break
         
         if len(sphereList) > 1:
@@ -308,16 +308,27 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
     
     for i in range(len(allContours_circularity)-1):
         for child in allContours_circularity[i]:
-            if not (child in checkedContours):
+            if not (id(child) in checkedIds):
                 sphere = buildSphere(child, i+1, [])
                 if sphere is not None:
                     headSpheres.append(sphere)
                 
-    print(headSpheres)
-    print(len(headSpheres))
+    
+    print("Number of headSpheres: {}".format(len(headSpheres)))
+    
+    largestHeadSphere = None
+    if len(headSpheres) > 0:
+        headSphereAreas = []
+        for sphere in headSpheres:
+            area = cv2.contourArea(sphere[-1])
+            headSphereAreas.append(area)
             
-        
-    return allContours, allContours_area, allContours_circularity, allContours_rectangularity, headSpheres
+        largestHeadSphere = headSpheres[headSphereAreas.index(max(headSphereAreas))]
+    
+    # Find torso cuboid contours
+    #TODO
+    
+    return allContours, allContours_area, allContours_circularity, allContours_rectangularity, largestHeadSphere
 
 # Handle frame updates when depth sliders are changed
 def updateFrame(arg):
@@ -381,7 +392,7 @@ while True:
     if len(perspectivePoints) == 4:
         if(DEBUG_FLAG):
             start_time = time.time()
-        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, headSpheres = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
+        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, largestHeadSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         if(DEBUG_FLAG):
             print("--- {}s seconds ---".format((time.time() - start_time)))
@@ -416,8 +427,10 @@ while True:
     
     if len(perspectivePoints) == 4:
 
-        for sphere in headSpheres:
-            finalImage = cv2.drawContours(finalImage, sphere, -1, (255,0,0), 2)
+        # for sphere in headSpheres:
+        #     finalImage = cv2.drawContours(finalImage, sphere, -1, (255,0,0), 2)
+        if largestHeadSphere is not None:
+            finalImage = cv2.drawContours(finalImage, largestHeadSphere, -1, (255, 0, 0), 2)
                 
         # for cons in contours_filteredRectangularity:
         #     finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,0), 1)
