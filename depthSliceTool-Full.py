@@ -13,6 +13,9 @@ import time
 import copy
 import sys
 import math
+# from collections import deque
+import os
+import csv
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 
@@ -69,6 +72,7 @@ depthSelectEnabled = False
 perspectiveSelectEnabled = False
 depthPoints = []
 perspectivePoints = []
+avgTorsoDepth = []
 
 def buttonHandler(*args):
     global depthSelectEnabled, perspectiveSelectEnabled, perspectivePoints
@@ -212,9 +216,9 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
     fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
     fulcrumPixelDepth = fulcrumPoint[2] * scaling_factor
     
-    contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, largestHeadSphere = crossSections(np_final_frame, fulcrumPixelDepth)
+    contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth)
     
-    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, largestHeadSphere
+    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere
     # return np_final_frame
 
 def crossSections(np_depth_frame, fulcrumPixelDepth):
@@ -223,7 +227,7 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
     np_depth_frame = np_depth_frame * scaling_factor
     minDepth = np.min(np_depth_frame[np.nonzero(np_depth_frame)])
     bedDepth = fulcrumPixelDepth
-    sliceInc = (bedDepth - minDepth) / 15
+    sliceInc = (bedDepth - minDepth) / 20
     
     # if (DEBUG_FLAG):
     print("minDepth: {}".format(minDepth))
@@ -233,7 +237,7 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
     
     sliceDepth = minDepth
     cross_section_frames = []
-    for i in range(14):
+    for i in range(19):
         np_depth_frame_mask = (np_depth_frame <= sliceDepth) * 1.0
         cross_section_frames.append(np_depth_frame_mask)        
         sliceDepth = sliceDepth + sliceInc
@@ -242,7 +246,6 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
     allContours = []
     allContours_area = []
     allContours_circularity = []
-    allContours_rectangularity = []
     for np_cs_frame in cross_section_frames:
         np_cs_frame = np_cs_frame.astype(np.uint8)
         contours, hierarchy = cv2.findContours(np_cs_frame, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -263,72 +266,94 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
             if 0.65 < circularity < 1.35:
                 contours_filteredCircularity.append(con)
                 
-        contours_filteredRectangularity = []
-        for con in contours_filteredArea:
-            epsilon = 0.03*cv2.arcLength(con, True)
-            approx = cv2.approxPolyDP(con, epsilon, True)
-            contours_filteredRectangularity.append(approx)
-            
-                
         allContours.append(contours)
         allContours_area.append(contours_filteredArea)
         allContours_circularity.append(contours_filteredCircularity)
-        allContours_rectangularity.append(contours_filteredRectangularity)
                 
         print("Contours: {}".format(len(contours)))
         print("Contours (after area filter): {}".format(len(contours_filteredArea)))
         print("Contours (after circle filter): {}".format(len(contours_filteredCircularity)))
-        print("Contours (after rectangularity): {}".format(len(contours_filteredRectangularity)))
         
     # Find head sphere contours
     headSpheres = []
     checkedContours = []
     checkedIds = []
+    maxSlice_headSpheres = []
     
-    def buildSphere(child, i, sphereList):
+    def buildSphere(child, i, sphereList, contourPool, maxSlice=None):
         sphereList.append(child)
         checkedContours.append(child)
         M = cv2.moments(child)
         cX = int(M["m10"] / M["m00"])
         cY = int(M["m01"] / M["m00"])
         
-        for parent in allContours_circularity[i]:
+        for parent in contourPool[i]:
             if not (id(parent) in checkedIds):
                 checkedContours.append(checkedContours)
                 ids = map(id, checkedContours)
             if (cv2.pointPolygonTest(parent, (cX, cY), True) >= 0):
-                if i+1 < len(allContours_circularity):
-                    sphereList = buildSphere(parent, i+1, sphereList)
+                if i+1 < (len(contourPool) if maxSlice is None else maxSlice):
+                    # print("maxSlice is: {}".format(maxSlice))
+                    # print("i is: {}".format(i))
+                    sphereList, _ = buildSphere(parent, i+1, sphereList, contourPool, maxSlice)
                 break
         
         if len(sphereList) > 1:
-            return sphereList
+            # print("At the end of buildSphere, i is: {}".format(i))
+            return sphereList, i
         else:
-            return None
+            return None, None
     
     for i in range(len(allContours_circularity)-1):
         for child in allContours_circularity[i]:
             if not (id(child) in checkedIds):
-                sphere = buildSphere(child, i+1, [])
+                sphere, maxHeadSlice = buildSphere(child, i+1, [], allContours_circularity)
                 if sphere is not None:
                     headSpheres.append(sphere)
+                    maxSlice_headSpheres.append(maxHeadSlice)
                 
     
     print("Number of headSpheres: {}".format(len(headSpheres)))
     
     largestHeadSphere = None
+    headSphere = None
+    maxHeadSlice = None
     if len(headSpheres) > 0:
-        headSphereAreas = []
+        headSphereCircularityErrs = []
         for sphere in headSpheres:
+            perimeter = cv2.arcLength(sphere[-1], True)
             area = cv2.contourArea(sphere[-1])
-            headSphereAreas.append(area)
-            
-        largestHeadSphere = headSpheres[headSphereAreas.index(max(headSphereAreas))]
+            circularity = 4*math.pi*(area/(perimeter*perimeter))
+            headSphereCircularityErrs.append(abs(1-circularity))
+        
+        chosenHeadSphere_idx = headSphereCircularityErrs.index(min(headSphereCircularityErrs))
+        headSphere = headSpheres[chosenHeadSphere_idx]
+        maxHeadSlice = maxSlice_headSpheres[chosenHeadSphere_idx]
     
     # Find torso cuboid contours
-    #TODO
+    torsoSpheres = []
+    checkedContours = []
+    checkedIds = []
     
-    return allContours, allContours_area, allContours_circularity, allContours_rectangularity, largestHeadSphere
+    if maxHeadSlice is not None:
+        for i in range(maxHeadSlice):
+            for child in allContours_area[i]:
+                if not (id(child) in checkedIds):
+                    sphere, _ = buildSphere(child, i+1, [], allContours_area, maxHeadSlice)
+                    if sphere is not None:
+                        torsoSpheres.append(sphere)
+                    
+    torsoSphere = None
+    if len(torsoSpheres) > 0:
+        torsoSphereAreas = []
+        for sphere in torsoSpheres:
+            area = cv2.contourArea(sphere[-1])
+            torsoSphereAreas.append(area)
+            
+        chosenTorsoSphere_idx = torsoSphereAreas.index(max(torsoSphereAreas))
+        torsoSphere = torsoSpheres[chosenTorsoSphere_idx]
+    
+    return allContours, allContours_area, allContours_circularity, headSphere, maxHeadSlice, torsoSphere
 
 # Handle frame updates when depth sliders are changed
 def updateFrame(arg):
@@ -392,7 +417,7 @@ while True:
     if len(perspectivePoints) == 4:
         if(DEBUG_FLAG):
             start_time = time.time()
-        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, contours_filteredRectangularity, largestHeadSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
+        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         if(DEBUG_FLAG):
             print("--- {}s seconds ---".format((time.time() - start_time)))
@@ -426,41 +451,35 @@ while True:
     displayDepthPoints(np_depth_frame_scaled, finalImage)
     
     if len(perspectivePoints) == 4:
-
-        # for sphere in headSpheres:
-        #     finalImage = cv2.drawContours(finalImage, sphere, -1, (255,0,0), 2)
-        if largestHeadSphere is not None:
-            finalImage = cv2.drawContours(finalImage, largestHeadSphere, -1, (255, 0, 0), 2)
-                
-        # for cons in contours_filteredRectangularity:
-        #     finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,0), 1)
+        
+        # for cons in contours:
+        #     finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,255), 2)
+        
+        # if maxHeadSlice is not None:
+        #     for i in range(maxHeadSlice):
+        #         finalImage = cv2.drawContours(finalImage, contours_filteredArea[i], -1, (0,0,255), 2)
             
         # for cons in contours_filteredCircularity:
-            # for con in cons:
-            #     (x,y), radius = cv2.minEnclosingCircle(con)
-            #     center = (int(x), int(y))
-            #     radius = int(radius)
-            #     finalImage = cv2.circle(finalImage, center, 5, (0,255,0), -1)
-            # finalImage = cv2.drawContours(finalImage, cons, -1, (0,0,255), 2)
+        #     finalImage = cv2.drawContours(finalImage, cons, -1, (0,0,255), 2)
             
-        # for con in contours_filteredCircularity[0]:
-        #     (x,y), radius = cv2.minEnclosingCircle(con)
-        #     center = (int(x), int(y))
-        #     radius = int(radius)
-        #     finalImage = cv2.circle(finalImage, center, 5, (0,0,255), -1)
+        # Display final headsphere contours
+        if headSphere is not None:
+            finalImage = cv2.drawContours(finalImage, headSphere, -1, (255, 0, 0), 2)
             
-        # for con in contours_filteredCircularity[-1]:
-        #     (x,y), radius = cv2.minEnclosingCircle(con)
-        #     center = (int(x), int(y))
-        #     radius = int(radius)
-        #     finalImage = cv2.circle(finalImage, center, 5, (255,0,0), -1)
+        if torsoSphere is not None:
+            finalImage = cv2.drawContours(finalImage, torsoSphere, -1, (0,0,255), 2)
+            # finalImage = cv2.drawContours(finalImage, [torsoSphere[-1]], -1, (0,0,255), -1)
             
-        # finalImage = cv2.drawContours(finalImage, contours_filteredCircularity[5], -1, (0,0,255), 3)
-        # finalImage = cv2.drawContours(finalImage, contours_filteredCircularity[-1], -1, (255,0,0), 3)
-        
-        # finalImage = cv2.drawContours(finalImage, contours, -1, (0,0,255), 3)
-        # finalImage = cv2.drawContours(finalImage, contours_filteredArea, -1, (0,255,0), 3)
-        # finalImage = cv2.drawContours(finalImage, contours_filteredCircularity, -1, (255,0,0), 3)
+            roi = np.ones(np_depth_frame.shape)
+            roi = cv2.drawContours(roi, [torsoSphere[-1]], -1, 0, -1)
+            
+            np_ma_torsoROI = np.ma.masked_array(np_depth_frame, mask=roi)
+            print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), aligned_frames.get_timestamp()))
+            if not isPaused:
+                avgTorsoDepth.append([np_ma_torsoROI.mean(), aligned_frames.get_timestamp()])
+            
+        # for cons in contours_filteredRectangularity:
+        #     finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,0), 1)
     
     output_image = finalImage
     
@@ -470,6 +489,13 @@ while True:
     # If user presses ESCAPE or clicks the close button, end    
     key = cv2.waitKey(1)
     if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
+        if len(avgTorsoDepth) > 0:
+            filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
+            print(filename)
+            with open(filename, 'w') as f:
+                csvWriter = csv.writer(f)
+                csvWriter.writerow(["Mean Depth", "Timestamp"])
+                csvWriter.writerows(avgTorsoDepth)
         cv2.destroyAllWindows()
         break
     
