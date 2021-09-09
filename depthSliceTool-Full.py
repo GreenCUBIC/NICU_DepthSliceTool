@@ -188,23 +188,53 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
     
     rotationMatrix, fulcrumPixel_idx = calculateRotationMatrix(points)
     
-    pcPoints = pc.calculate(depth_frame)
-    np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
+    cropPointsX = list(map(lambda p: p[0], perspectivePoints))
+    cropPointsY = list(map(lambda p: p[1], perspectivePoints))
+    minCropX = min(cropPointsX)
+    maxCropX = max(cropPointsX)
+    minCropY = min(cropPointsY)
+    maxCropY = max(cropPointsY)
+    minCropX_idx = cropPointsX.index(minCropX)
+    maxCropX_idx = cropPointsX.index(maxCropX)
+    minCropY_idx = cropPointsY.index(minCropY)
+    maxCropY_idx = cropPointsY.index(maxCropY)
+    
+    print(perspectivePoints)
+    for point in perspectivePoints:
+        pX = point[0] - minCropX
+        pY = point[1] - minCropY
+        point = (pX, pY)
+    print(perspectivePoints)
+    
+    np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
+    fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, perspectivePoints[fulcrumPixel_idx], np_depth_frame[perspectivePoints[fulcrumPixel_idx]])
+    fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
+    fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
+    
+    verts = []
+    for ix, iy in np.ndindex(np_depth_frame.shape):
+        depth = np_depth_frame[ix, iy]
+        point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
+        verts.append(point)
+    
+    np_verts = np.asanyarray(verts)
+    # pcPoints = pc.calculate(depth_frame)
+    # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
     
     np_verts_transformed = rotationMatrix.dot(np_verts.T).T
     np_verts_transformed = np_verts_transformed[~np.all(np_verts_transformed == 0, axis=1)]
-    np_verts_transformed = np_verts_transformed / scaling_factor
+    np_verts_transformed = np_verts_transformed
     
     # project back to 2D image with depth as data (WORKING BUT SLOW)   
-    np_transformed_depth_frame = np.zeros([1080,1920])
+    np_transformed_depth_frame = np.zeros([480,640])
     for vert in np_verts_transformed:
         pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
-        if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
-            np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0] + 960)] = vert[2]
+        if (pixel[0] < 640 and pixel[1] < 480 and pixel[0] >= 0 and pixel[1] >= 0):
+            np_transformed_depth_frame[int(pixel[1]),int(pixel[0])] = vert[2]
             
     # Remove rows and columns of all zeros
-    np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
-    np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
+    # np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
+    # np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
         
     # OpenCV dilation
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
@@ -213,8 +243,9 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
     np_eroded_depth_frame = cv2.erode(np_dilated_depth_frame, kernel)
     np_final_frame = np_eroded_depth_frame
     
-    fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
-    fulcrumPixelDepth = fulcrumPoint[2] * scaling_factor
+    
+    # fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
+    # fulcrumPixelDepth = fulcrumPoint[2] * scaling_factor
     
     contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth)
     
@@ -417,6 +448,7 @@ while True:
     if len(perspectivePoints) == 4:
         if(DEBUG_FLAG):
             start_time = time.time()
+        
         np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         if(DEBUG_FLAG):
@@ -452,8 +484,8 @@ while True:
     
     if len(perspectivePoints) == 4:
         
-        # for cons in contours:
-        #     finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,255), 2)
+        for cons in contours_filteredArea:
+            finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,255), 2)
         
         # if maxHeadSlice is not None:
         #     for i in range(maxHeadSlice):
@@ -492,10 +524,10 @@ while True:
         if len(avgTorsoDepth) > 0:
             filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
             print(filename)
-            with open(filename, 'w') as f:
-                csvWriter = csv.writer(f)
-                csvWriter.writerow(["Mean Depth", "Timestamp"])
-                csvWriter.writerows(avgTorsoDepth)
+            # with open(filename, 'w') as f:
+            #     csvWriter = csv.writer(f)
+            #     csvWriter.writerow(["Mean Depth", "Timestamp"])
+            #     csvWriter.writerows(avgTorsoDepth)
         cv2.destroyAllWindows()
         break
     
