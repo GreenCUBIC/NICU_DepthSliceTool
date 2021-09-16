@@ -22,6 +22,7 @@ from tkinter.filedialog import askopenfilename
 DSENABLE = "DEPTH_SELECT_ENABLE"
 PTENABLE = "PERSPECTIVE_TRANSFORM_ENABLE"
 DEBUG_FLAG = False
+PTERROR_REPORT = True
 
 windowName = "DepthSlice Tool"
 slider1Name = "Slice depth (increments of 0.001)"
@@ -70,9 +71,14 @@ savedFrame = None
 isPaused = False
 depthSelectEnabled = False
 perspectiveSelectEnabled = False
+rotationMatrix = None
+fulcrumPixel_idx = None
 depthPoints = []
 perspectivePoints = []
 avgTorsoDepth = []
+PTError = None
+PTAngle = None
+PTAxis = None
 
 def buttonHandler(*args):
     global depthSelectEnabled, perspectiveSelectEnabled, perspectivePoints
@@ -135,8 +141,13 @@ def npShift(arr, numX, numY, fill_value=0):
     return result
 
 def calculateRotationMatrix(points):
+    global PTError, PTAngle, PTAxis
+    
     rMatrices = []
+    rAngles = []
+    rAxes = []
     tpDiffs = []
+    tpComparision = []
     for pointIndex in range(len(points)):
         vAB = np.subtract(points[(pointIndex + 1) % 4], points[pointIndex])
         vAC = np.subtract(points[(pointIndex + 3) % 4], points[pointIndex])
@@ -158,20 +169,30 @@ def calculateRotationMatrix(points):
             print("rAngle: {}".format(rAngle))
             print("Rotation Matrix: {}".format(rotationMatrix))
         
+        rAngles.append(rAngle)
+        rAxes.append(np.array2string(rAxis))
+        
         testPoints = rotationMatrix.dot(np.asanyarray(points).T).T
         testPointDiff = testPoints[(pointIndex + 2 ) % 4, 2] - testPoints[pointIndex, 2]
+        tpComparision.append(testPoints[pointIndex, 2])
         tpDiffs.append(abs(testPointDiff))
         
     temp = min(tpDiffs)
     minIdx = [i for i, j in enumerate(tpDiffs) if j == temp]
+    minIdx = minIdx[0] if isinstance(minIdx, list) else minIdx
+    
+    if (PTERROR_REPORT):
+        PTError = (tpDiffs[minIdx] / tpComparision[minIdx]) * 100
+        PTAngle = rAngles[minIdx]
+        PTAxis = rAxes[minIdx]
     
     if (DEBUG_FLAG):
         print("Chosen rotation point: {}".format(minIdx))
         
-    return rMatrices[minIdx[0] if isinstance(minIdx, list) else minIdx], ((minIdx[0] + 2) % 4) if isinstance(minIdx, list) else ((minIdx + 2) % 4)
+    return rMatrices[minIdx], ((minIdx + 2) % 4)
         
-def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
-    global pc
+def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints, np_depth_frame_prev):
+    global pc, rotationMatrix, fulcrumPixel_idx, isPaused
     points = []
     camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
                                         [0, intrinsics.fy, intrinsics.ppy],
@@ -186,28 +207,30 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
         point = rs.rs2_deproject_pixel_to_point(intrinsics, pixel, depth)
         points.append(point)
     
-    rotationMatrix, fulcrumPixel_idx = calculateRotationMatrix(points)
+    if rotationMatrix is None:
+        rotationMatrix, fulcrumPixel_idx = calculateRotationMatrix(points)
     
     cropPointsX = list(map(lambda p: p[0], perspectivePoints))
     cropPointsY = list(map(lambda p: p[1], perspectivePoints))
     minCropX = min(cropPointsX)
-    maxCropX = max(cropPointsX)
+    maxCropX = max(cropPointsX) + 1
     minCropY = min(cropPointsY)
-    maxCropY = max(cropPointsY)
-    minCropX_idx = cropPointsX.index(minCropX)
-    maxCropX_idx = cropPointsX.index(maxCropX)
-    minCropY_idx = cropPointsY.index(minCropY)
-    maxCropY_idx = cropPointsY.index(maxCropY)
+    maxCropY = max(cropPointsY) + 1
     
-    print(perspectivePoints)
+    if (DEBUG_FLAG):
+        print(perspectivePoints)
+        
+    pPoints = []
     for point in perspectivePoints:
         pX = point[0] - minCropX
         pY = point[1] - minCropY
-        point = (pX, pY)
-    print(perspectivePoints)
+        pPoints.append((pX, pY))
+        
+    if (DEBUG_FLAG):
+        print(pPoints)
     
     np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
-    fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, perspectivePoints[fulcrumPixel_idx], np_depth_frame[perspectivePoints[fulcrumPixel_idx]])
+    fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
     fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
     fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
     
@@ -226,15 +249,15 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
     np_verts_transformed = np_verts_transformed
     
     # project back to 2D image with depth as data (WORKING BUT SLOW)   
-    np_transformed_depth_frame = np.zeros([480,640])
+    np_transformed_depth_frame = np.zeros([1080,1920])
     for vert in np_verts_transformed:
         pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
-        if (pixel[0] < 640 and pixel[1] < 480 and pixel[0] >= 0 and pixel[1] >= 0):
-            np_transformed_depth_frame[int(pixel[1]),int(pixel[0])] = vert[2]
+        if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
+            np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
             
     # Remove rows and columns of all zeros
-    # np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
-    # np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
+    np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
+    np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
         
     # OpenCV dilation
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
@@ -243,11 +266,21 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
     np_eroded_depth_frame = cv2.erode(np_dilated_depth_frame, kernel)
     np_final_frame = np_eroded_depth_frame
     
+    # Black out pixels that have not changed since the last frame
+    # NOT WORKING YET
+    
+    # if not isPaused and np_depth_frame_prev is not None and np_final_frame.shape == np_depth_frame_prev.shape:
+    #     staticPixels = np.invert((np_final_frame / 2).astype(int) == (np_depth_frame_prev / 2).astype(int)) * 1.0
+    #     print(staticPixels)
+    #     print(staticPixels.shape)
+    #     np_final_frame = np_final_frame * staticPixels
+    
     
     # fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
     # fulcrumPixelDepth = fulcrumPoint[2] * scaling_factor
-    
-    contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth)
+    contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = None, None, None, None, None, None, None
+    if np.any(np_final_frame):
+        contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth)
     
     return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere
     # return np_final_frame
@@ -256,13 +289,13 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
     global scaling_factor
     
     np_depth_frame = np_depth_frame * scaling_factor
-    minDepth = np.min(np_depth_frame[np.nonzero(np_depth_frame)])
+    minDepth = np.min(np_depth_frame[np_depth_frame != 0])
     bedDepth = fulcrumPixelDepth
     sliceInc = (bedDepth - minDepth) / 20
     
-    # if (DEBUG_FLAG):
-    print("minDepth: {}".format(minDepth))
-    print("bedDepth: {}".format(bedDepth))
+    if (DEBUG_FLAG):
+        print("minDepth: {}".format(minDepth))
+        print("bedDepth: {}".format(bedDepth))
     
     np_depth_frame[np_depth_frame == 0] = bedDepth + 1
     
@@ -294,16 +327,17 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
             if perimeter == 0:
                 break
             circularity = 4*math.pi*(area/(perimeter*perimeter))
-            if 0.65 < circularity < 1.35:
+            if 0.50 < circularity < 1.50:
                 contours_filteredCircularity.append(con)
                 
         allContours.append(contours)
         allContours_area.append(contours_filteredArea)
         allContours_circularity.append(contours_filteredCircularity)
                 
-        print("Contours: {}".format(len(contours)))
-        print("Contours (after area filter): {}".format(len(contours_filteredArea)))
-        print("Contours (after circle filter): {}".format(len(contours_filteredCircularity)))
+        if (DEBUG_FLAG):
+            print("Contours: {}".format(len(contours)))
+            print("Contours (after area filter): {}".format(len(contours_filteredArea)))
+            print("Contours (after circle filter): {}".format(len(contours_filteredCircularity)))
         
     # Find head sphere contours
     headSpheres = []
@@ -343,10 +377,9 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
                     headSpheres.append(sphere)
                     maxSlice_headSpheres.append(maxHeadSlice)
                 
+    if (DEBUG_FLAG):
+        print("Number of headSpheres: {}".format(len(headSpheres)))
     
-    print("Number of headSpheres: {}".format(len(headSpheres)))
-    
-    largestHeadSphere = None
     headSphere = None
     maxHeadSlice = None
     if len(headSpheres) > 0:
@@ -384,7 +417,7 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
         chosenTorsoSphere_idx = torsoSphereAreas.index(max(torsoSphereAreas))
         torsoSphere = torsoSpheres[chosenTorsoSphere_idx]
     
-    return allContours, allContours_area, allContours_circularity, headSphere, maxHeadSlice, torsoSphere
+    return allContours, allContours_area, allContours_circularity, headSphere, headSpheres, maxHeadSlice, torsoSphere
 
 # Handle frame updates when depth sliders are changed
 def updateFrame(arg):
@@ -421,6 +454,8 @@ cv2.createButton("Perspective Transformation", buttonHandler, PTENABLE, cv2.QT_P
 
 frames = pipeline.wait_for_frames()
 
+np_depth_frame_prev = None
+
 # Streaming loop
 while True:
     
@@ -449,8 +484,11 @@ while True:
         if(DEBUG_FLAG):
             start_time = time.time()
         
-        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
+        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints, np_depth_frame_prev)
         # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
+        
+        np_depth_frame_prev = np_depth_frame.copy()
+        
         if(DEBUG_FLAG):
             print("--- {}s seconds ---".format((time.time() - start_time)))
     else:
@@ -506,7 +544,8 @@ while True:
             roi = cv2.drawContours(roi, [torsoSphere[-1]], -1, 0, -1)
             
             np_ma_torsoROI = np.ma.masked_array(np_depth_frame, mask=roi)
-            print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), aligned_frames.get_timestamp()))
+            if (DEBUG_FLAG):
+                print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), aligned_frames.get_timestamp()))
             if not isPaused:
                 avgTorsoDepth.append([np_ma_torsoROI.mean(), aligned_frames.get_timestamp()])
             
@@ -522,12 +561,18 @@ while True:
     key = cv2.waitKey(1)
     if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
         if len(avgTorsoDepth) > 0:
-            filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
-            print(filename)
-            # with open(filename, 'w') as f:
+            avgTorsoDepth_filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
+            # with open(avgTorsoDepth_filename, 'w') as f:
             #     csvWriter = csv.writer(f)
             #     csvWriter.writerow(["Mean Depth", "Timestamp"])
             #     csvWriter.writerows(avgTorsoDepth)
+                
+        if PTError is not None:
+            PTError_filename = os.path.splitext(filename)[0] + "_PerspectiveTransformError.csv"
+            with open(PTError_filename, 'w') as f:
+                csvWriter = csv.writer(f)
+                csvWriter.writerow(["Angle (rad)", "Axis", "Absolute Error (%)"])
+                csvWriter.writerow([PTAngle, PTAxis, PTError])
         cv2.destroyAllWindows()
         break
     
