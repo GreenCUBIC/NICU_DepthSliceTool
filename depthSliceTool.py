@@ -21,6 +21,7 @@ from tkinter.filedialog import askopenfilename
 
 DSENABLE = "DEPTH_SELECT_ENABLE"
 PTENABLE = "PERSPECTIVE_TRANSFORM_ENABLE"
+RGBENABLE = "RGB_OVERLAY_ENABLE"
 DEBUG_FLAG = False
 PTERROR_REPORT = True
 
@@ -71,17 +72,19 @@ savedFrame = None
 isPaused = False
 depthSelectEnabled = False
 perspectiveSelectEnabled = False
+rgbOverlayEnabled = False
 rotationMatrix = None
 fulcrumPixel_idx = None
 depthPoints = []
 perspectivePoints = []
 avgTorsoDepth = []
+np_depth_frame_prev = None
 PTError = None
 PTAngle = None
 PTAxis = None
 
 def buttonHandler(*args):
-    global depthSelectEnabled, perspectiveSelectEnabled, perspectivePoints
+    global depthSelectEnabled, perspectiveSelectEnabled, perspectivePoints, rgbOverlayEnabled
     if args[1] == DSENABLE:
         perspectiveSelectEnabled = False
         depthSelectEnabled = not depthSelectEnabled
@@ -89,6 +92,8 @@ def buttonHandler(*args):
         depthSelectEnabled = False
         perspectivePoints = []
         perspectiveSelectEnabled = not perspectiveSelectEnabled
+    elif args[1] == RGBENABLE:
+        rgbOverlayEnabled = not rgbOverlayEnabled
 
 def mouseEvent(action, x, y, flags, *userdata):
     global depthPoints, depthSelectEnabled, perspectivePoints, perspectiveSelectEnabled
@@ -191,8 +196,8 @@ def calculateRotationMatrix(points):
         
     return rMatrices[minIdx], ((minIdx + 2) % 4)
         
-def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints, np_depth_frame_prev):
-    global pc, rotationMatrix, fulcrumPixel_idx, isPaused
+def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
+    global pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev
     points = []
     camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
                                         [0, intrinsics.fy, intrinsics.ppy],
@@ -269,11 +274,13 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints, np_d
     # Black out pixels that have not changed since the last frame
     # NOT WORKING YET
     
-    # if not isPaused and np_depth_frame_prev is not None and np_final_frame.shape == np_depth_frame_prev.shape:
-    #     staticPixels = np.invert((np_final_frame / 2).astype(int) == (np_depth_frame_prev / 2).astype(int)) * 1.0
-    #     print(staticPixels)
-    #     print(staticPixels.shape)
-    #     np_final_frame = np_final_frame * staticPixels
+    if not isPaused and np_depth_frame_prev is not None and np_final_frame.shape == np_depth_frame_prev.shape:
+        staticPixels = np.invert((np_final_frame / 2).astype(int) == (np_depth_frame_prev / 2).astype(int)) * 1.0
+        print(staticPixels)
+        print(staticPixels.shape)
+        np_final_frame = np_final_frame * staticPixels
+        
+    np_depth_frame_prev = np_final_frame.copy()
     
     
     # fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
@@ -451,10 +458,9 @@ cv2.createTrackbar(switchName, windowName, 0, 1, playPause)
 cv2.setMouseCallback(windowName, mouseEvent)
 cv2.createButton("Toggle Depth Selector", buttonHandler, DSENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 cv2.createButton("Perspective Transformation", buttonHandler, PTENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
+cv2.createButton("RGB Overlay (Only on original video)", buttonHandler, RGBENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 
 frames = pipeline.wait_for_frames()
-
-np_depth_frame_prev = None
 
 # Streaming loop
 while True:
@@ -484,10 +490,10 @@ while True:
         if(DEBUG_FLAG):
             start_time = time.time()
         
-        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints, np_depth_frame_prev)
+        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         
-        np_depth_frame_prev = np_depth_frame.copy()
+        # np_depth_frame_prev = np_depth_frame.copy()
         
         if(DEBUG_FLAG):
             print("--- {}s seconds ---".format((time.time() - start_time)))
@@ -496,8 +502,6 @@ while True:
         
     np_depth_frame_scaled = np_depth_frame * scaling_factor
             
-    # depth_color_frame = colorizer.colorize(depth_frame)
-    # np_depth_color_frame = np.asanyarray(depth_color_frame.get_data())
     np_depth_color_frame = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame, alpha=0.03), cv2.COLORMAP_TURBO)
         
     # Make boolean mask for a depth slice
@@ -507,38 +511,36 @@ while True:
     np_depth_frame_bool2 = (np_depth_frame_scaled > slice2At) * 1
     np_depth_frame_bool = np.bitwise_and(np_depth_frame_bool1, np_depth_frame_bool2)
     
-    np_color_frame_masked = np_depth_color_frame.copy()
+    np_depth_color_frame_masked = np_depth_color_frame.copy()
+    np_color_frame_masked = np_color_frame.copy()
     
     # Slice the color frame using the boolean mask
     for i in range(0, 3):
-        np_color_frame_masked[:, :, i] = np_color_frame_masked[:, :, i] * np_depth_frame_bool
+        np_depth_color_frame_masked[:, :, i] = np_depth_color_frame_masked[:, :, i] * np_depth_frame_bool
     
     slider1Arg, slice1At, slider2Arg, slice2At = updateFrame(0)
-    
-    finalImage = np_color_frame_masked.copy()
-    # finalImage = np_color_frame.copy()
-    
-    displayDepthPoints(np_depth_frame_scaled, finalImage)
+    finalDepthImage = np_depth_color_frame_masked
+    displayDepthPoints(np_depth_frame_scaled, finalDepthImage)
     
     if len(perspectivePoints) == 4:
         
         for cons in contours_filteredArea:
-            finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,255), 2)
+            finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,255), 2)
         
         # if maxHeadSlice is not None:
         #     for i in range(maxHeadSlice):
-        #         finalImage = cv2.drawContours(finalImage, contours_filteredArea[i], -1, (0,0,255), 2)
+        #         finalDepthImage = cv2.drawContours(finalDepthImage, contours_filteredArea[i], -1, (0,0,255), 2)
             
         # for cons in contours_filteredCircularity:
-        #     finalImage = cv2.drawContours(finalImage, cons, -1, (0,0,255), 2)
+        #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (0,0,255), 2)
             
         # Display final headsphere contours
         if headSphere is not None:
-            finalImage = cv2.drawContours(finalImage, headSphere, -1, (255, 0, 0), 2)
+            finalDepthImage = cv2.drawContours(finalDepthImage, headSphere, -1, (255, 0, 0), 2)
             
         if torsoSphere is not None:
-            finalImage = cv2.drawContours(finalImage, torsoSphere, -1, (0,0,255), 2)
-            # finalImage = cv2.drawContours(finalImage, [torsoSphere[-1]], -1, (0,0,255), -1)
+            finalDepthImage = cv2.drawContours(finalDepthImage, torsoSphere, -1, (0,0,255), 2)
+            # finalDepthImage = cv2.drawContours(finalDepthImage, [torsoSphere[-1]], -1, (0,0,255), -1)
             
             roi = np.ones(np_depth_frame.shape)
             roi = cv2.drawContours(roi, [torsoSphere[-1]], -1, 0, -1)
@@ -550,9 +552,17 @@ while True:
                 avgTorsoDepth.append([np_ma_torsoROI.mean(), aligned_frames.get_timestamp()])
             
         # for cons in contours_filteredRectangularity:
-        #     finalImage = cv2.drawContours(finalImage, cons, -1, (255,0,0), 1)
+        #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,0), 1)
     
-    output_image = finalImage
+    output_image = finalDepthImage
+    
+    if rgbOverlayEnabled and len(perspectivePoints) != 4:
+        for i in range(0, 3):
+            np_color_frame_masked[:, :, i] = np_color_frame_masked[:, :, i] * np_depth_frame_bool
+            
+        finalColorImage = np_color_frame_masked
+        displayDepthPoints(np_depth_frame_scaled, finalColorImage)
+        output_image = finalColorImage
     
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
