@@ -79,6 +79,7 @@ depthPoints = []
 perspectivePoints = []
 avgTorsoDepth = []
 np_depth_frame_prev = None
+np_depth_frame_prev_prev = None
 PTError = None
 PTAngle = None
 PTAxis = None
@@ -197,7 +198,7 @@ def calculateRotationMatrix(points):
     return rMatrices[minIdx], ((minIdx + 2) % 4)
         
 def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
-    global pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev
+    global pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev
     points = []
     camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
                                         [0, intrinsics.fy, intrinsics.ppy],
@@ -235,6 +236,28 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
         print(pPoints)
     
     np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
+    
+    # Black out pixels that have not changed since the last frame
+    # NOT WORKING YET
+    
+    np_depth_frame_cp = np_depth_frame.copy()
+    if not isPaused and np_depth_frame_prev is not None and np_depth_frame_prev_prev is not None and np_depth_frame.shape == np_depth_frame_prev.shape:
+        diffPixels = cv2.absdiff(np_depth_frame, np_depth_frame_prev)
+        diffPixels_prev = cv2.absdiff(np_depth_frame, np_depth_frame_prev_prev)
+        staticPixels = (diffPixels > 5)
+        staticPixels_prev = (diffPixels > 5)
+        
+        staticOverPrev = (np.logical_or(staticPixels, staticPixels_prev)) * 1.0
+        print(staticOverPrev)
+        print(np_depth_frame)
+        print(staticOverPrev.shape)
+        np_depth_frame = np_depth_frame * staticOverPrev
+    
+    if np_depth_frame_prev is not None:
+        np_depth_frame_prev_prev = np_depth_frame_prev.copy()
+    np_depth_frame_prev = np_depth_frame_cp
+        
+    
     fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
     fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
     fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
@@ -263,24 +286,16 @@ def perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints):
     # Remove rows and columns of all zeros
     np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
     np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
+    np_final_frame = np_transformed_depth_frame
+    
+    
         
     # OpenCV dilation
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
-    np_dilated_depth_frame = cv2.dilate(np_transformed_depth_frame, kernel)
+    np_dilated_depth_frame = cv2.dilate(np_final_frame, kernel)
     np_final_frame = np_dilated_depth_frame
     np_eroded_depth_frame = cv2.erode(np_dilated_depth_frame, kernel)
     np_final_frame = np_eroded_depth_frame
-    
-    # Black out pixels that have not changed since the last frame
-    # NOT WORKING YET
-    
-    if not isPaused and np_depth_frame_prev is not None and np_final_frame.shape == np_depth_frame_prev.shape:
-        staticPixels = np.invert((np_final_frame / 2).astype(int) == (np_depth_frame_prev / 2).astype(int)) * 1.0
-        print(staticPixels)
-        print(staticPixels.shape)
-        np_final_frame = np_final_frame * staticPixels
-        
-    np_depth_frame_prev = np_final_frame.copy()
     
     
     # fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
@@ -456,9 +471,9 @@ cv2.createTrackbar(slider1Name, windowName, 1500 if DEBUG_FLAG else 15, 1000, up
 cv2.createTrackbar(slider2Name, windowName, 0, 1500, updateFrame)
 cv2.createTrackbar(switchName, windowName, 0, 1, playPause)
 cv2.setMouseCallback(windowName, mouseEvent)
+cv2.createButton("RGB Overlay (Only on original video)", buttonHandler, RGBENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 cv2.createButton("Toggle Depth Selector", buttonHandler, DSENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 cv2.createButton("Perspective Transformation", buttonHandler, PTENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
-cv2.createButton("RGB Overlay (Only on original video)", buttonHandler, RGBENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 
 frames = pipeline.wait_for_frames()
 
