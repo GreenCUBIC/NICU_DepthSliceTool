@@ -69,7 +69,7 @@ slice1At = 0
 slice2At = 0
 scaling_factor = 0
 savedFrame = None
-isPaused = False
+isPaused = True
 depthSelectEnabled = False
 perspectiveSelectEnabled = False
 rgbOverlayEnabled = False
@@ -468,7 +468,7 @@ def playPause(arg):
 cv2.namedWindow(windowName, cv2.WINDOW_AUTOSIZE)
 cv2.createTrackbar(slider1Name, windowName, 1500 if DEBUG_FLAG else 15, 1000, updateFrame)
 cv2.createTrackbar(slider2Name, windowName, 0, 1500, updateFrame)
-cv2.createTrackbar(switchName, windowName, 0, 1, playPause)
+cv2.createTrackbar(switchName, windowName, 1, 1, playPause)
 cv2.setMouseCallback(windowName, mouseEvent)
 cv2.createButton("RGB Overlay (Only on original video)", buttonHandler, RGBENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 cv2.createButton("Toggle Depth Selector", buttonHandler, DSENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
@@ -479,6 +479,7 @@ def bufferVideo(nFrames):
     
     depth_frames = []
     color_frames = []
+    timestamps = []
     for i in range(nFrames):
         frame = pipeline.wait_for_frames()
         aligned_frame = align.process(frame)
@@ -491,10 +492,11 @@ def bufferVideo(nFrames):
         np_color_frame = np.asanyarray(color_frame.get_data())
         depth_frames.append(np_depth_frame.copy())
         color_frames.append(np_color_frame.copy())
+        timestamps.append(aligned_frame.get_timestamp())
         
-    return depth_frames, color_frames, depth_frame.get_units()
+    return depth_frames, color_frames, timestamps, depth_frame.get_units()
 
-depth_frames, color_frames, scaling_factor = bufferVideo(900)
+depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(900)
     
 # Streaming loop
 frameCounter = 0
@@ -570,10 +572,10 @@ while frameCounter < len(depth_frames):
             roi = cv2.drawContours(roi, [torsoSphere[-1]], -1, 0, -1)
             
             np_ma_torsoROI = np.ma.masked_array(np_depth_frame, mask=roi)
-            # if (DEBUG_FLAG):
-            #     print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), aligned_frames.get_timestamp()))
-            # if not isPaused:
-            #     avgTorsoDepth.append([np_ma_torsoROI.mean(), aligned_frames.get_timestamp()])
+            if (DEBUG_FLAG):
+                print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), timestamps[frameCounter]))
+            if not isPaused:
+                avgTorsoDepth.append([np_ma_torsoROI.mean(), timestamps[frameCounter]])
             
         # for cons in contours_filteredRectangularity:
         #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,0), 1)
@@ -596,10 +598,10 @@ while frameCounter < len(depth_frames):
     if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
         if len(avgTorsoDepth) > 0:
             avgTorsoDepth_filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
-            # with open(avgTorsoDepth_filename, 'w') as f:
-            #     csvWriter = csv.writer(f)
-            #     csvWriter.writerow(["Mean Depth", "Timestamp"])
-            #     csvWriter.writerows(avgTorsoDepth)
+            with open(avgTorsoDepth_filename, 'w') as f:
+                csvWriter = csv.writer(f)
+                csvWriter.writerow(["Mean Depth", "Timestamp"])
+                csvWriter.writerows(avgTorsoDepth)
                 
         if PTError is not None:
             PTError_filename = os.path.splitext(filename)[0] + "_PerspectiveTransformError.csv"
