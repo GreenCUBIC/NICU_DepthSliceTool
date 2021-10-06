@@ -13,7 +13,6 @@ import time
 import copy
 import sys
 import math
-# from collections import deque
 import os
 import csv
 import random
@@ -193,12 +192,6 @@ def calculateRotationMatrix(points):
 def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     global pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev
     points = []
-    # camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
-    #                                     [0, intrinsics.fy, intrinsics.ppy],
-    #                                     [0, 0, 1]])
-    # camera_rotation_matrix = np.identity(3)
-    # camera_translation_matrix = np.array([0.0, 0.0, 0.0])
-    # distortion_coeffs = np.asanyarray(intrinsics.coeffs)
     
     for pixel in perspectivePoints:
         depth = np_depth_frame[pixel[1],pixel[0]]
@@ -207,23 +200,12 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     
     if rotationMatrix is None:
         rotationMatrix, fulcrumPixel_idx = calculateRotationMatrix(points)
-    
-    # cropPointsX = list(map(lambda p: p[0], perspectivePoints))
-    # cropPointsY = list(map(lambda p: p[1], perspectivePoints))
-    # minCropX = min(cropPointsX)
-    # maxCropX = max(cropPointsX) + 1
-    # minCropY = min(cropPointsY)
-    # maxCropY = max(cropPointsY) + 1
-    
+        
     if (DEBUG_FLAG):
         print(perspectivePoints)
         
     pPoints = []
     for point in perspectivePoints:
-        # pX = point[0] - minCropX
-        # pY = point[1] - minCropY
-        
-        #DEBUGING
         pX = point[0]
         pY = point[1]
         
@@ -231,29 +213,6 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
         
     if (DEBUG_FLAG):
         print(pPoints)
-    
-    # np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
-    
-    # Black out pixels that have not changed since the last frame
-    # NOT WORKING YET
-    
-    # np_depth_frame_cp = np_depth_frame.copy()
-    # if not isPaused and np_depth_frame_prev is not None and np_depth_frame_prev_prev is not None and np_depth_frame.shape == np_depth_frame_prev.shape:
-    #     diffPixels = cv2.absdiff(np_depth_frame, np_depth_frame_prev)
-    #     diffPixels_prev = cv2.absdiff(np_depth_frame, np_depth_frame_prev_prev)
-    #     staticPixels = (diffPixels > 5)
-    #     staticPixels_prev = (diffPixels > 5)
-        
-    #     staticOverPrev = (np.logical_or(staticPixels, staticPixels_prev)) * 1.0
-    #     print(staticOverPrev)
-    #     print(np_depth_frame)
-    #     print(staticOverPrev.shape)
-    #     np_depth_frame = np_depth_frame * staticOverPrev
-    
-    # if np_depth_frame_prev is not None:
-    #     np_depth_frame_prev_prev = np_depth_frame_prev.copy()
-    # np_depth_frame_prev = np_depth_frame_cp
-        
     
     fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
     fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
@@ -265,10 +224,7 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
         point = rs.rs2_deproject_pixel_to_point(intrinsics, [ix, iy], depth)
         verts.append(point)
     
-    np_verts = np.asanyarray(verts)
-    # pcPoints = pc.calculate(depth_frame)
-    # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
-    
+    np_verts = np.asanyarray(verts)    
     np_verts_transformed = rotationMatrix.dot(np_verts.T).T
     np_verts_transformed = np_verts_transformed[~np.all(np_verts_transformed == 0, axis=1)]
     np_verts_transformed = np_verts_transformed
@@ -281,8 +237,6 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
             np_transformed_depth_frame[int(pixel[1] + 0),int(pixel[0]) + 0] = vert[2]
             
     # Remove rows and columns of all zeros
-    # np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
-    # np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
     np_final_frame = np_transformed_depth_frame
     
     
@@ -377,13 +331,10 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
                 ids = map(id, checkedContours)
             if (cv2.pointPolygonTest(parent, (cX, cY), True) >= 0):
                 if i+1 < (len(contourPool) if maxSlice is None else maxSlice):
-                    # print("maxSlice is: {}".format(maxSlice))
-                    # print("i is: {}".format(i))
                     sphereList, _ = buildSphere(parent, i+1, sphereList, contourPool, maxSlice)
                 break
         
         if len(sphereList) > 1:
-            # print("At the end of buildSphere, i is: {}".format(i))
             return sphereList, i
         else:
             return None, None
@@ -520,11 +471,8 @@ while True:
                 start_time = time.time()
             
             np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints)
-            # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
             inv_rotMat = np.linalg.inv(rotationMatrix)
-            
-            # np_depth_frame_prev = np_depth_frame.copy()
-            
+                        
             if(DEBUG_FLAG):
                 print("--- {}s seconds ---".format((time.time() - start_time)))
             
@@ -538,16 +486,6 @@ while True:
         finalDepthImage = np_depth_color_frame_orig
         
         if len(perspectivePoints) == 4:
-            
-            # for cons in contours_filteredArea:
-            #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,255), 2)
-            
-            # if maxHeadSlice is not None:
-            #     for i in range(maxHeadSlice):
-            #         finalDepthImage = cv2.drawContours(finalDepthImage, contours_filteredArea[i], -1, (0,0,255), 2)
-                
-            # for cons in contours_filteredCircularity:
-            #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (0,0,255), 2)
                 
             # Display final headsphere contours
             if headSphere is not None:
@@ -575,29 +513,45 @@ while True:
                 headContour_pixels = headContour_pixels.astype(int)
                 
                 finalDepthImage = np_depth_color_frame_orig
-                print(headContour_pixels)
-                print(type(headContour_pixels[0][0]))
                 
                 for i in range(1, len(headContour_pixels)):
                     finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[i], headContour_pixels[i-1], (255, 0, 0), thickness=1)
+                    
+            # Display final headsphere contours
+            if torsoSphere is not None:
+                finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, torsoSphere, -1, (0, 0, 255), 2)
                 
-                # finalDepthImage = cv2.drawContours(finalDepthImage, np.array([headContour_pixels]), -1, (255, 0, 0), 1)
+                # Get points of head contour after PT
+                torsoSphere_pts = []
+                for px in torsoSphere[-1]:
+                    depth = np_depth_frame[px[0][1],px[0][0]]
+                    point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
+                    torsoSphere_pts.append(point)
                 
-            # if torsoSphere is not None:
-            #     finalDepthImage = cv2.drawContours(finalDepthImage, torsoSphere, -1, (0,0,255), 2)
-            #     # finalDepthImage = cv2.drawContours(finalDepthImage, [torsoSphere[-1]], -1, (0,0,255), -1)
+                # Apply inverse rotation matrix to PT head contour points to get points at original angle
+                np_torsoSphere_pts = np.asanyarray(torsoSphere_pts)
+                np_torsoSphere_pts_transformed = inv_rotMat.dot(np_torsoSphere_pts.T).T
                 
-            #     roi = np.ones(np_depth_frame.shape)
-            #     roi = cv2.drawContours(roi, [torsoSphere[-1]], -1, 0, -1)
+                # Project original angle head contour points back to pixels
+                torsoSphere_pixels = []
+                for pt in np_torsoSphere_pts_transformed:
+                    pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
+                    torsoSphere_pixels.append(pixel)
+                    
+                torsoSphere_pixels = np.asanyarray(torsoSphere_pixels)
+                torsoSphere_pixels = np.absolute(torsoSphere_pixels)
+                torsoSphere_pixels = torsoSphere_pixels.astype(int)
                 
-            # for cons in contours_filteredRectangularity:
-            #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,0), 1)
+                
+                for i in range(1, len(torsoSphere_pixels)):
+                    finalDepthImage = cv2.line(finalDepthImage, torsoSphere_pixels[i], torsoSphere_pixels[i-1], (0, 0, 255), thickness=1)
+                
     
         output_image = finalDepthImage
         
         #DEBUGGING
         # output_image = finalDepthImage_PT
-        # cv2.imshow("test2", finalDepthImage_PT)
+        cv2.imshow("test2", finalDepthImage_PT)
         
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
