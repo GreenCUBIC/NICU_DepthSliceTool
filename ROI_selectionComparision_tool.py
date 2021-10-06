@@ -193,12 +193,12 @@ def calculateRotationMatrix(points):
 def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     global pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev
     points = []
-    camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
-                                        [0, intrinsics.fy, intrinsics.ppy],
-                                        [0, 0, 1]])
-    camera_rotation_matrix = np.identity(3)
-    camera_translation_matrix = np.array([0.0, 0.0, 0.0])
-    distortion_coeffs = np.asanyarray(intrinsics.coeffs)
+    # camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
+    #                                     [0, intrinsics.fy, intrinsics.ppy],
+    #                                     [0, 0, 1]])
+    # camera_rotation_matrix = np.identity(3)
+    # camera_translation_matrix = np.array([0.0, 0.0, 0.0])
+    # distortion_coeffs = np.asanyarray(intrinsics.coeffs)
     
     for pixel in perspectivePoints:
         depth = np_depth_frame[pixel[1],pixel[0]]
@@ -208,26 +208,31 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     if rotationMatrix is None:
         rotationMatrix, fulcrumPixel_idx = calculateRotationMatrix(points)
     
-    cropPointsX = list(map(lambda p: p[0], perspectivePoints))
-    cropPointsY = list(map(lambda p: p[1], perspectivePoints))
-    minCropX = min(cropPointsX)
-    maxCropX = max(cropPointsX) + 1
-    minCropY = min(cropPointsY)
-    maxCropY = max(cropPointsY) + 1
+    # cropPointsX = list(map(lambda p: p[0], perspectivePoints))
+    # cropPointsY = list(map(lambda p: p[1], perspectivePoints))
+    # minCropX = min(cropPointsX)
+    # maxCropX = max(cropPointsX) + 1
+    # minCropY = min(cropPointsY)
+    # maxCropY = max(cropPointsY) + 1
     
     if (DEBUG_FLAG):
         print(perspectivePoints)
         
     pPoints = []
     for point in perspectivePoints:
-        pX = point[0] - minCropX
-        pY = point[1] - minCropY
+        # pX = point[0] - minCropX
+        # pY = point[1] - minCropY
+        
+        #DEBUGING
+        pX = point[0]
+        pY = point[1]
+        
         pPoints.append((pX, pY))
         
     if (DEBUG_FLAG):
         print(pPoints)
     
-    np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
+    # np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
     
     # Black out pixels that have not changed since the last frame
     # NOT WORKING YET
@@ -255,9 +260,9 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
     
     verts = []
-    for ix, iy in np.ndindex(np_depth_frame.shape):
-        depth = np_depth_frame[ix, iy]
-        point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
+    for iy, ix in np.ndindex(np_depth_frame.shape):
+        depth = np_depth_frame[iy, ix]
+        point = rs.rs2_deproject_pixel_to_point(intrinsics, [ix, iy], depth)
         verts.append(point)
     
     np_verts = np.asanyarray(verts)
@@ -273,11 +278,11 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     for vert in np_verts_transformed:
         pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
         if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
-            np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
+            np_transformed_depth_frame[int(pixel[1] + 0),int(pixel[0]) + 0] = vert[2]
             
     # Remove rows and columns of all zeros
-    np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
-    np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
+    # np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
+    # np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
     np_final_frame = np_transformed_depth_frame
     
     
@@ -529,12 +534,13 @@ while True:
         np_depth_color_frame = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame, alpha=0.03), cv2.COLORMAP_TURBO)
         np_depth_color_frame_orig = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame_orig, alpha=0.03), cv2.COLORMAP_TURBO)
         
-        finalDepthImage = np_depth_color_frame
+        finalDepthImage_PT = np_depth_color_frame
+        finalDepthImage = np_depth_color_frame_orig
         
         if len(perspectivePoints) == 4:
             
-            for cons in contours_filteredArea:
-                finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,255), 2)
+            # for cons in contours_filteredArea:
+            #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,255), 2)
             
             # if maxHeadSlice is not None:
             #     for i in range(maxHeadSlice):
@@ -545,7 +551,7 @@ while True:
                 
             # Display final headsphere contours
             if headSphere is not None:
-                finalDepthImage = cv2.drawContours(finalDepthImage, headSphere, -1, (255, 0, 0), 2)
+                finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, headSphere, -1, (255, 0, 0), 2)
                 
                 # Get points of head contour after PT
                 headContour_pts = []
@@ -588,6 +594,9 @@ while True:
             #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,0), 1)
     
         output_image = finalDepthImage
+        
+        #DEBUGGING
+        # output_image = finalDepthImage_PT
         
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
