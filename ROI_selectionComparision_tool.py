@@ -547,15 +547,18 @@ while True:
             if headSphere is not None:
                 finalDepthImage = cv2.drawContours(finalDepthImage, headSphere, -1, (255, 0, 0), 2)
                 
+                # Get points of head contour after PT
                 headContour_pts = []
                 for px in headSphere[-1]:
                     depth = np_depth_frame[px[0][1],px[0][0]]
                     point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][1], px[0][0]), depth)
                     headContour_pts.append(point)
                 
+                # Apply inverse rotation matrix to PT head contour points to get points at original angle
                 np_headContour_pts = np.asanyarray(headContour_pts)
                 np_headContour_pts_transformed = inv_rotMat.dot(np_headContour_pts.T).T
                 
+                # Project original angle head contour points back to pixels
                 headContour_pixels = []
                 for pt in np_headContour_pts_transformed:
                     pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
