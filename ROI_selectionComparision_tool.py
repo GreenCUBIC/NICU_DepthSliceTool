@@ -551,7 +551,7 @@ while True:
         
         #DEBUGGING
         # output_image = finalDepthImage_PT
-        cv2.imshow("test2", finalDepthImage_PT)
+        # cv2.imshow("test2", finalDepthImage_PT)
         
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
