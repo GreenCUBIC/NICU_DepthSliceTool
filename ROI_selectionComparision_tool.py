@@ -557,7 +557,7 @@ while True:
                 headContour_pts = []
                 for px in headSphere[-1]:
                     depth = np_depth_frame[px[0][1],px[0][0]]
-                    point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][1], px[0][0]), depth)
+                    point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
                     headContour_pts.append(point)
                 
                 # Apply inverse rotation matrix to PT head contour points to get points at original angle
@@ -597,6 +597,7 @@ while True:
         
         #DEBUGGING
         # output_image = finalDepthImage_PT
+        # cv2.imshow("test2", finalDepthImage_PT)
         
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
