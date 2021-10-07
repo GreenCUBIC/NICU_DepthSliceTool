@@ -10,11 +10,9 @@ import numpy as np
 import cv2
 import datetime
 import time
-import copy
 import sys
 import math
 import os
-import csv
 import random
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
@@ -422,18 +420,26 @@ depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(90)
 # Streaming loop
 frameCounter = random.randrange(0, len(depth_frames))
 savedMaskToggle = False
+savedDepthImage = False
+
 pathToResults = os.path.splitext(filename)[0] + "_results/"
 try:
     os.mkdir(pathToResults)
-except OSError as error:
+except OSError:
     pass
+
+np_color_frame = color_frames[frameCounter]
+
+np_depth_frame = depth_frames[frameCounter]
+im = Image.fromarray(np_color_frame)
+im.save(pathToResults + "color_frame.jpg")
+np_color_frame = np_color_frame[...,::-1]
+finalDepthImage_output = None
 
 while True:
     
     # Stage 1: Manual head ROI selection
     if currStage == STAGEONE_FLAG:
-        np_color_frame = color_frames[frameCounter]
-        np_color_frame = np_color_frame[...,::-1]
         output_image = np_color_frame.copy()
         
         len_headPts = len(stageOne_headPts)
@@ -486,126 +492,135 @@ while True:
         
     # Stage 3: Automatic head and torso ROI selection (as in depthSliceTool)
     else:
-        if savedMaskToggle:
-            im = Image.fromarray(stageTwo_torsoROI)
-            im = im.convert("L")
-            im.save(pathToResults + "torsoROI_manual.jpg")
-            savedMaskToggle = False
-        np_depth_frame = depth_frames[frameCounter]
-        np_depth_frame_orig = np_depth_frame.copy()
-        if len(perspectivePoints) < 4:
-            perspectiveSelectEnabled = True
-        if len(perspectivePoints) == 4:
-            if(DEBUG_FLAG):
-                start_time = time.time()
+        if finalDepthImage_output is None:
+            if savedMaskToggle:
+                im = Image.fromarray(stageTwo_torsoROI)
+                im = im.convert("L")
+                im.save(pathToResults + "torsoROI_manual.jpg")
+                savedMaskToggle = False
             
-            np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints)
-            inv_rotMat = np.linalg.inv(rotationMatrix)
+            np_depth_frame_orig = np_depth_frame.copy()
+            if len(perspectivePoints) < 4:
+                perspectiveSelectEnabled = True
+            if len(perspectivePoints) == 4:
+                if(DEBUG_FLAG):
+                    start_time = time.time()
+                
+                np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints)
+                inv_rotMat = np.linalg.inv(rotationMatrix)
+                            
+                if(DEBUG_FLAG):
+                    print("--- {}s seconds ---".format((time.time() - start_time)))
+                
+            np_depth_frame_scaled = np_depth_frame * scaling_factor
+            np_depth_frame_orig_scaled = np_depth_frame_orig * scaling_factor
+                    
+            np_depth_color_frame = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame, alpha=0.03), cv2.COLORMAP_TURBO)
+            np_depth_color_frame_orig = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame_orig, alpha=0.03), cv2.COLORMAP_TURBO)
+            
+            finalDepthImage_PT = np_depth_color_frame
+            finalDepthImage = np_depth_color_frame_orig
+            if not savedDepthImage:
+                im = Image.fromarray(finalDepthImage)
+                im.save(pathToResults + "depth_frame.jpg")
+                savedDepthImage = True
+            
+            if len(perspectivePoints) == 4:
+                    
+                # Display final headsphere contours
+                if headSphere is not None:
+                    finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, headSphere, -1, (255, 0, 0), 2)
+                    
+                    # Get points of head contour after PT
+                    headContour_pts = []
+                    for px in headSphere[-1]:
+                        depth = np_depth_frame[px[0][1],px[0][0]]
+                        point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
+                        headContour_pts.append(point)
+                    
+                    # Apply inverse rotation matrix to PT head contour points to get points at original angle
+                    np_headContour_pts = np.asanyarray(headContour_pts)
+                    np_headContour_pts_transformed = inv_rotMat.dot(np_headContour_pts.T).T
+                    
+                    # Project original angle head contour points back to pixels
+                    headContour_pixels = []
+                    for pt in np_headContour_pts_transformed:
+                        pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
+                        headContour_pixels.append(pixel)
                         
-            if(DEBUG_FLAG):
-                print("--- {}s seconds ---".format((time.time() - start_time)))
+                    headContour_pixels = np.asanyarray(headContour_pixels)
+                    headContour_pixels = np.absolute(headContour_pixels)
+                    headContour_pixels = headContour_pixels.astype(int)
+                    
+                    finalDepthImage = np_depth_color_frame_orig
+                    
+                    for i in range(1, len(headContour_pixels)):
+                        finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[i], headContour_pixels[i-1], (255, 0, 0), thickness=1)
+                        
+                    finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[-1], headContour_pixels[0], (255, 0, 0), thickness=1)
+                    overlay = finalDepthImage.copy()
+                    overlay = cv2.drawContours(overlay, np.array([headContour_pixels]), 0, (255, 0, 0), -1)
+                    alpha = 0.2
+                    finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
+                        
+                    stageThree_headROI = np.zeros(finalDepthImage.shape[:2])
+                    stageThree_headROI = cv2.drawContours(stageThree_headROI, np.array([headContour_pixels]), 0, 255, -1)
+                    
+                    if not savedMaskToggle:
+                        im = Image.fromarray(stageThree_headROI)
+                        im = im.convert("L")
+                        im.save(pathToResults + "headROI_auto.jpg")
+                        savedMaskToggle = True
+                    
+                # Display final torsoSphere contours
+                if torsoSphere is not None:
+                    finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, torsoSphere, -1, (0, 0, 255), 2)
+                    
+                    # Get points of head contour after PT
+                    torsoContour_pts = []
+                    for px in torsoSphere[-1]:
+                        depth = np_depth_frame[px[0][1],px[0][0]]
+                        point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
+                        torsoContour_pts.append(point)
+                    
+                    # Apply inverse rotation matrix to PT head contour points to get points at original angle
+                    np_torsoContour_pts = np.asanyarray(torsoContour_pts)
+                    np_torsoContour_pts_transformed = inv_rotMat.dot(np_torsoContour_pts.T).T
+                    
+                    # Project original angle head contour points back to pixels
+                    torsoContour_pixels = []
+                    for pt in np_torsoContour_pts_transformed:
+                        pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
+                        torsoContour_pixels.append(pixel)
+                        
+                    torsoContour_pixels = np.asanyarray(torsoContour_pixels)
+                    torsoContour_pixels = np.absolute(torsoContour_pixels)
+                    torsoContour_pixels = torsoContour_pixels.astype(int)
+                    
+                    
+                    for i in range(1, len(torsoContour_pixels)):
+                        finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[i], torsoContour_pixels[i-1], (0, 0, 255), thickness=1)
+                    
+                    finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[-1], torsoContour_pixels[0], (0, 0, 255), thickness=1)
+                    overlay = finalDepthImage.copy()
+                    overlay = cv2.drawContours(overlay, np.array([torsoContour_pixels]), 0, (0, 0, 255), -1)
+                    alpha = 0.2
+                    finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
+                        
+                    stageThree_torsoROI = np.zeros(finalDepthImage.shape[:2])
+                    stageThree_torsoROI = cv2.drawContours(stageThree_torsoROI, np.array([torsoContour_pixels]), 0, 255, -1)
+                    
+                    if savedMaskToggle:
+                        im = Image.fromarray(stageThree_torsoROI)
+                        im = im.convert("L")
+                        im.save(pathToResults + "torsoROI_auto.jpg")
+                        savedMaskToggle = False
+                        finalDepthImage_output = finalDepthImage.copy()
+        
+            output_image = finalDepthImage
             
-        np_depth_frame_scaled = np_depth_frame * scaling_factor
-        np_depth_frame_orig_scaled = np_depth_frame_orig * scaling_factor
-                
-        np_depth_color_frame = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame, alpha=0.03), cv2.COLORMAP_TURBO)
-        np_depth_color_frame_orig = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame_orig, alpha=0.03), cv2.COLORMAP_TURBO)
-        
-        finalDepthImage_PT = np_depth_color_frame
-        finalDepthImage = np_depth_color_frame_orig
-        
-        if len(perspectivePoints) == 4:
-                
-            # Display final headsphere contours
-            if headSphere is not None:
-                finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, headSphere, -1, (255, 0, 0), 2)
-                
-                # Get points of head contour after PT
-                headContour_pts = []
-                for px in headSphere[-1]:
-                    depth = np_depth_frame[px[0][1],px[0][0]]
-                    point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
-                    headContour_pts.append(point)
-                
-                # Apply inverse rotation matrix to PT head contour points to get points at original angle
-                np_headContour_pts = np.asanyarray(headContour_pts)
-                np_headContour_pts_transformed = inv_rotMat.dot(np_headContour_pts.T).T
-                
-                # Project original angle head contour points back to pixels
-                headContour_pixels = []
-                for pt in np_headContour_pts_transformed:
-                    pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
-                    headContour_pixels.append(pixel)
-                    
-                headContour_pixels = np.asanyarray(headContour_pixels)
-                headContour_pixels = np.absolute(headContour_pixels)
-                headContour_pixels = headContour_pixels.astype(int)
-                
-                finalDepthImage = np_depth_color_frame_orig
-                
-                for i in range(1, len(headContour_pixels)):
-                    finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[i], headContour_pixels[i-1], (255, 0, 0), thickness=1)
-                    
-                finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[-1], headContour_pixels[0], (255, 0, 0), thickness=1)
-                overlay = finalDepthImage.copy()
-                overlay = cv2.drawContours(overlay, np.array([headContour_pixels]), 0, (255, 0, 0), -1)
-                alpha = 0.2
-                finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
-                    
-                stageThree_headROI = np.zeros(finalDepthImage.shape[:2])
-                stageThree_headROI = cv2.drawContours(stageThree_headROI, np.array([headContour_pixels]), 0, 255, -1)
-                
-                if not savedMaskToggle:
-                    im = Image.fromarray(stageThree_headROI)
-                    im = im.convert("L")
-                    im.save(pathToResults + "headROI_auto.jpg")
-                    savedMaskToggle = True
-                
-            # Display final torsoSphere contours
-            if torsoSphere is not None:
-                finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, torsoSphere, -1, (0, 0, 255), 2)
-                
-                # Get points of head contour after PT
-                torsoContour_pts = []
-                for px in torsoSphere[-1]:
-                    depth = np_depth_frame[px[0][1],px[0][0]]
-                    point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
-                    torsoContour_pts.append(point)
-                
-                # Apply inverse rotation matrix to PT head contour points to get points at original angle
-                np_torsoContour_pts = np.asanyarray(torsoContour_pts)
-                np_torsoContour_pts_transformed = inv_rotMat.dot(np_torsoContour_pts.T).T
-                
-                # Project original angle head contour points back to pixels
-                torsoContour_pixels = []
-                for pt in np_torsoContour_pts_transformed:
-                    pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
-                    torsoContour_pixels.append(pixel)
-                    
-                torsoContour_pixels = np.asanyarray(torsoContour_pixels)
-                torsoContour_pixels = np.absolute(torsoContour_pixels)
-                torsoContour_pixels = torsoContour_pixels.astype(int)
-                
-                
-                for i in range(1, len(torsoContour_pixels)):
-                    finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[i], torsoContour_pixels[i-1], (0, 0, 255), thickness=1)
-                
-                finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[-1], torsoContour_pixels[0], (0, 0, 255), thickness=1)
-                overlay = finalDepthImage.copy()
-                overlay = cv2.drawContours(overlay, np.array([torsoContour_pixels]), 0, (0, 0, 255), -1)
-                alpha = 0.2
-                finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
-                    
-                stageThree_torsoROI = np.zeros(finalDepthImage.shape[:2])
-                stageThree_torsoROI = cv2.drawContours(stageThree_torsoROI, np.array([torsoContour_pixels]), 0, 255, -1)
-                
-                if savedMaskToggle:
-                    im = Image.fromarray(stageThree_torsoROI)
-                    im = im.convert("L")
-                    im.save(pathToResults + "torsoROI_auto.jpg")
-                    savedMaskToggle = False
-    
-        output_image = finalDepthImage
+        else:
+            output_image = finalDepthImage_output
         
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
