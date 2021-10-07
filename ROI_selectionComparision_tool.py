@@ -422,15 +422,16 @@ depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(90)
 frameCounter = random.randrange(0, len(depth_frames))
 
 while True:
-    if currStage == STAGEONE_FLAG:
     
+    # Stage 1: Manual head ROI selection
+    if currStage == STAGEONE_FLAG:
         np_color_frame = color_frames[frameCounter]
         np_color_frame = np_color_frame[...,::-1]
         stageOne_headROI = np.ones(np_color_frame.shape)
-        stageTwo_torsoROI = np.ones(np_color_frame.shape)
         output_image = np_color_frame.copy()
         
         len_headPts = len(stageOne_headPts)
+        # Show selected polygon points and connections
         if len_headPts > 0:
             output_image = cv2.circle(output_image, stageOne_headPts[0], radius=0, color=(255, 0, 0), thickness=-1)
         if len_headPts > 1:
@@ -438,15 +439,23 @@ while True:
                 output_image = cv2.line(output_image, stageOne_headPts[i], stageOne_headPts[i-1], (255, 0, 0), thickness=1)
         if drawingHeadFinished:
             output_image = cv2.line(output_image, stageOne_headPts[-1], stageOne_headPts[0], (255, 0, 0), thickness=1)
+            
+            # Show completed polygon (with alpha channel for some transparancy)
             overlay = output_image.copy()
             overlay = cv2.drawContours(overlay, np.array([stageOne_headPts]), 0, (255, 0, 0), -1)
             alpha = 0.2
             output_image = cv2.addWeighted(overlay, alpha, output_image, 1-alpha, 0)
+            
+            # Save area of completed polygon in a numpy masked array for comparison with automatic method
             stageOne_headROI = cv2.drawContours(stageOne_headROI, np.array([stageOne_headPts]), 0, 0, -1)
             np_color_frame_masked_headROI = np.ma.masked_array(np_color_frame, stageOne_headROI)
-            
+           
+    # Stage 2: Manual torso ROI selection
     elif currStage == STAGETWO_FLAG:
+        stageTwo_torsoROI = np.ones(np_color_frame.shape)
+        
         len_torsoPts = len(stageTwo_torsoPts)
+        # Show selected polygon points and connections
         if len_torsoPts > 0:
             output_image = cv2.circle(output_image, stageTwo_torsoPts[0], radius=0, color=(0, 0, 255), thickness=-1)
         if len_torsoPts > 1:
@@ -454,13 +463,18 @@ while True:
                 output_image = cv2.line(output_image, stageTwo_torsoPts[i], stageTwo_torsoPts[i-1], (0, 0, 255), thickness=1)
         if drawingTorsoFinished:
             output_image = cv2.line(output_image, stageTwo_torsoPts[-1], stageTwo_torsoPts[0], (0, 0, 255), thickness=1)
+            
+            # Show completed polygon (with alpha channel for some transparancy)
             overlay = output_image.copy()
             overlay = cv2.drawContours(overlay, np.array([stageTwo_torsoPts]), 0, (0, 0, 255), -1)
-            alpha = 0.1
+            alpha = 0.4
             output_image = cv2.addWeighted(overlay, alpha, output_image, 1-alpha, 0)
+            
+            # Save area of completed polygon in a numpy masked array for comparison with automatic method
             stageTwo_torsoROI = cv2.drawContours(stageTwo_torsoROI, np.array([stageTwo_torsoPts]), 0, 0, -1)
             np_color_frame_masked_torsoROI = np.ma.masked_array(np_color_frame, stageTwo_torsoROI)
         
+    # Stage 3: Automatic head and torso ROI selection (as in depthSliceTool)
     else:
         np_depth_frame = depth_frames[frameCounter]
         np_depth_frame_orig = np_depth_frame.copy()
@@ -517,34 +531,34 @@ while True:
                 for i in range(1, len(headContour_pixels)):
                     finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[i], headContour_pixels[i-1], (255, 0, 0), thickness=1)
                     
-            # Display final headsphere contours
+            # Display final torsoSphere contours
             if torsoSphere is not None:
                 finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, torsoSphere, -1, (0, 0, 255), 2)
                 
                 # Get points of head contour after PT
-                torsoSphere_pts = []
+                torsoContour_pts = []
                 for px in torsoSphere[-1]:
                     depth = np_depth_frame[px[0][1],px[0][0]]
                     point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
-                    torsoSphere_pts.append(point)
+                    torsoContour_pts.append(point)
                 
                 # Apply inverse rotation matrix to PT head contour points to get points at original angle
-                np_torsoSphere_pts = np.asanyarray(torsoSphere_pts)
-                np_torsoSphere_pts_transformed = inv_rotMat.dot(np_torsoSphere_pts.T).T
+                np_torsoContour_pts = np.asanyarray(torsoContour_pts)
+                np_torsoContour_pts_transformed = inv_rotMat.dot(np_torsoContour_pts.T).T
                 
                 # Project original angle head contour points back to pixels
-                torsoSphere_pixels = []
-                for pt in np_torsoSphere_pts_transformed:
+                torsoContour_pixels = []
+                for pt in np_torsoContour_pts_transformed:
                     pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
-                    torsoSphere_pixels.append(pixel)
+                    torsoContour_pixels.append(pixel)
                     
-                torsoSphere_pixels = np.asanyarray(torsoSphere_pixels)
-                torsoSphere_pixels = np.absolute(torsoSphere_pixels)
-                torsoSphere_pixels = torsoSphere_pixels.astype(int)
+                torsoContour_pixels = np.asanyarray(torsoContour_pixels)
+                torsoContour_pixels = np.absolute(torsoContour_pixels)
+                torsoContour_pixels = torsoContour_pixels.astype(int)
                 
                 
-                for i in range(1, len(torsoSphere_pixels)):
-                    finalDepthImage = cv2.line(finalDepthImage, torsoSphere_pixels[i], torsoSphere_pixels[i-1], (0, 0, 255), thickness=1)
+                for i in range(1, len(torsoContour_pixels)):
+                    finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[i], torsoContour_pixels[i-1], (0, 0, 255), thickness=1)
                 
     
         output_image = finalDepthImage
