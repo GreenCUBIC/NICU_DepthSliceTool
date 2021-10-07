@@ -18,6 +18,7 @@ import csv
 import random
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
+from PIL import Image
 
 PTENABLE = "PERSPECTIVE_TRANSFORM_ENABLE"
 STAGEONE_FLAG = "STAGE_ONE"
@@ -420,6 +421,12 @@ depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(90)
     
 # Streaming loop
 frameCounter = random.randrange(0, len(depth_frames))
+savedMaskToggle = False
+pathToResults = os.path.splitext(filename)[0] + "_results/"
+try:
+    os.mkdir(pathToResults)
+except OSError as error:
+    pass
 
 while True:
     
@@ -427,7 +434,6 @@ while True:
     if currStage == STAGEONE_FLAG:
         np_color_frame = color_frames[frameCounter]
         np_color_frame = np_color_frame[...,::-1]
-        stageOne_headROI = np.ones(np_color_frame.shape)
         output_image = np_color_frame.copy()
         
         len_headPts = len(stageOne_headPts)
@@ -447,13 +453,17 @@ while True:
             output_image = cv2.addWeighted(overlay, alpha, output_image, 1-alpha, 0)
             
             # Save area of completed polygon in a numpy masked array for comparison with automatic method
-            stageOne_headROI = cv2.drawContours(stageOne_headROI, np.array([stageOne_headPts]), 0, 0, -1)
-            np_color_frame_masked_headROI = np.ma.masked_array(np_color_frame, stageOne_headROI)
+            stageOne_headROI = np.zeros(np_color_frame.shape[:2])
+            stageOne_headROI = cv2.drawContours(stageOne_headROI, np.array([stageOne_headPts]), 0, 255, -1)
            
     # Stage 2: Manual torso ROI selection
     elif currStage == STAGETWO_FLAG:
-        stageTwo_torsoROI = np.ones(np_color_frame.shape)
-        
+        if not savedMaskToggle:
+            im = Image.fromarray(stageOne_headROI)
+            im = im.convert("L")
+            im.save(pathToResults + "headROI_manual.jpg")
+            savedMaskToggle = True
+            
         len_torsoPts = len(stageTwo_torsoPts)
         # Show selected polygon points and connections
         if len_torsoPts > 0:
@@ -467,15 +477,20 @@ while True:
             # Show completed polygon (with alpha channel for some transparancy)
             overlay = output_image.copy()
             overlay = cv2.drawContours(overlay, np.array([stageTwo_torsoPts]), 0, (0, 0, 255), -1)
-            alpha = 0.4
+            alpha = 0.2
             output_image = cv2.addWeighted(overlay, alpha, output_image, 1-alpha, 0)
             
             # Save area of completed polygon in a numpy masked array for comparison with automatic method
-            stageTwo_torsoROI = cv2.drawContours(stageTwo_torsoROI, np.array([stageTwo_torsoPts]), 0, 0, -1)
-            np_color_frame_masked_torsoROI = np.ma.masked_array(np_color_frame, stageTwo_torsoROI)
+            stageTwo_torsoROI = np.zeros(np_color_frame.shape[:2])
+            stageTwo_torsoROI = cv2.drawContours(stageTwo_torsoROI, np.array([stageTwo_torsoPts]), 0, 255, -1)
         
     # Stage 3: Automatic head and torso ROI selection (as in depthSliceTool)
     else:
+        if savedMaskToggle:
+            im = Image.fromarray(stageTwo_torsoROI)
+            im = im.convert("L")
+            im.save(pathToResults + "torsoROI_manual.jpg")
+            savedMaskToggle = False
         np_depth_frame = depth_frames[frameCounter]
         np_depth_frame_orig = np_depth_frame.copy()
         if len(perspectivePoints) < 4:
@@ -531,6 +546,21 @@ while True:
                 for i in range(1, len(headContour_pixels)):
                     finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[i], headContour_pixels[i-1], (255, 0, 0), thickness=1)
                     
+                finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[-1], headContour_pixels[0], (255, 0, 0), thickness=1)
+                overlay = finalDepthImage.copy()
+                overlay = cv2.drawContours(overlay, np.array([headContour_pixels]), 0, (255, 0, 0), -1)
+                alpha = 0.2
+                finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
+                    
+                stageThree_headROI = np.zeros(finalDepthImage.shape[:2])
+                stageThree_headROI = cv2.drawContours(stageThree_headROI, np.array([headContour_pixels]), 0, 255, -1)
+                
+                if not savedMaskToggle:
+                    im = Image.fromarray(stageThree_headROI)
+                    im = im.convert("L")
+                    im.save(pathToResults + "headROI_auto.jpg")
+                    savedMaskToggle = True
+                
             # Display final torsoSphere contours
             if torsoSphere is not None:
                 finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, torsoSphere, -1, (0, 0, 255), 2)
@@ -560,12 +590,22 @@ while True:
                 for i in range(1, len(torsoContour_pixels)):
                     finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[i], torsoContour_pixels[i-1], (0, 0, 255), thickness=1)
                 
+                finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[-1], torsoContour_pixels[0], (0, 0, 255), thickness=1)
+                overlay = finalDepthImage.copy()
+                overlay = cv2.drawContours(overlay, np.array([torsoContour_pixels]), 0, (0, 0, 255), -1)
+                alpha = 0.2
+                finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
+                    
+                stageThree_torsoROI = np.zeros(finalDepthImage.shape[:2])
+                stageThree_torsoROI = cv2.drawContours(stageThree_torsoROI, np.array([torsoContour_pixels]), 0, 255, -1)
+                
+                if savedMaskToggle:
+                    im = Image.fromarray(stageThree_torsoROI)
+                    im = im.convert("L")
+                    im.save(pathToResults + "torsoROI_auto.jpg")
+                    savedMaskToggle = False
     
         output_image = finalDepthImage
-        
-        #DEBUGGING
-        # output_image = finalDepthImage_PT
-        # cv2.imshow("test2", finalDepthImage_PT)
         
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
@@ -573,19 +613,9 @@ while True:
     # If user presses ESCAPE or clicks the close button, end    
     key = cv2.waitKey(1)
     if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
-        # if len(avgTorsoDepth) > 0:
-        #     avgTorsoDepth_filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
-        #     with open(avgTorsoDepth_filename, 'w') as f:
-        #         csvWriter = csv.writer(f)
-        #         csvWriter.writerow(["Mean Depth", "Timestamp"])
-        #         csvWriter.writerows(avgTorsoDepth)
-                
-        # if PTError is not None:
-        #     PTError_filename = os.path.splitext(filename)[0] + "_PerspectiveTransformError.csv"
-        #     with open(PTError_filename, 'w') as f:
-        #         csvWriter = csv.writer(f)
-        #         csvWriter.writerow(["Angle (rad)", "Axis", "Absolute Error (%)"])
-        #         csvWriter.writerow([PTAngle, PTAxis, PTError])
+        
+        
+        
         cv2.destroyAllWindows()
         break
         
