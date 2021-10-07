@@ -10,15 +10,13 @@ import numpy as np
 import cv2
 import datetime
 import time
-import copy
 import sys
 import math
-# from collections import deque
 import os
-import csv
 import random
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
+from PIL import Image
 
 PTENABLE = "PERSPECTIVE_TRANSFORM_ENABLE"
 STAGEONE_FLAG = "STAGE_ONE"
@@ -193,12 +191,6 @@ def calculateRotationMatrix(points):
 def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     global pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev
     points = []
-    camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
-                                        [0, intrinsics.fy, intrinsics.ppy],
-                                        [0, 0, 1]])
-    camera_rotation_matrix = np.identity(3)
-    camera_translation_matrix = np.array([0.0, 0.0, 0.0])
-    distortion_coeffs = np.asanyarray(intrinsics.coeffs)
     
     for pixel in perspectivePoints:
         depth = np_depth_frame[pixel[1],pixel[0]]
@@ -207,63 +199,31 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     
     if rotationMatrix is None:
         rotationMatrix, fulcrumPixel_idx = calculateRotationMatrix(points)
-    
-    cropPointsX = list(map(lambda p: p[0], perspectivePoints))
-    cropPointsY = list(map(lambda p: p[1], perspectivePoints))
-    minCropX = min(cropPointsX)
-    maxCropX = max(cropPointsX) + 1
-    minCropY = min(cropPointsY)
-    maxCropY = max(cropPointsY) + 1
-    
+        
     if (DEBUG_FLAG):
         print(perspectivePoints)
         
     pPoints = []
     for point in perspectivePoints:
-        pX = point[0] - minCropX
-        pY = point[1] - minCropY
+        pX = point[0]
+        pY = point[1]
+        
         pPoints.append((pX, pY))
         
     if (DEBUG_FLAG):
         print(pPoints)
-    
-    np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
-    
-    # Black out pixels that have not changed since the last frame
-    # NOT WORKING YET
-    
-    # np_depth_frame_cp = np_depth_frame.copy()
-    # if not isPaused and np_depth_frame_prev is not None and np_depth_frame_prev_prev is not None and np_depth_frame.shape == np_depth_frame_prev.shape:
-    #     diffPixels = cv2.absdiff(np_depth_frame, np_depth_frame_prev)
-    #     diffPixels_prev = cv2.absdiff(np_depth_frame, np_depth_frame_prev_prev)
-    #     staticPixels = (diffPixels > 5)
-    #     staticPixels_prev = (diffPixels > 5)
-        
-    #     staticOverPrev = (np.logical_or(staticPixels, staticPixels_prev)) * 1.0
-    #     print(staticOverPrev)
-    #     print(np_depth_frame)
-    #     print(staticOverPrev.shape)
-    #     np_depth_frame = np_depth_frame * staticOverPrev
-    
-    # if np_depth_frame_prev is not None:
-    #     np_depth_frame_prev_prev = np_depth_frame_prev.copy()
-    # np_depth_frame_prev = np_depth_frame_cp
-        
     
     fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
     fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
     fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
     
     verts = []
-    for ix, iy in np.ndindex(np_depth_frame.shape):
-        depth = np_depth_frame[ix, iy]
-        point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
+    for iy, ix in np.ndindex(np_depth_frame.shape):
+        depth = np_depth_frame[iy, ix]
+        point = rs.rs2_deproject_pixel_to_point(intrinsics, [ix, iy], depth)
         verts.append(point)
     
-    np_verts = np.asanyarray(verts)
-    # pcPoints = pc.calculate(depth_frame)
-    # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
-    
+    np_verts = np.asanyarray(verts)    
     np_verts_transformed = rotationMatrix.dot(np_verts.T).T
     np_verts_transformed = np_verts_transformed[~np.all(np_verts_transformed == 0, axis=1)]
     np_verts_transformed = np_verts_transformed
@@ -273,11 +233,9 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     for vert in np_verts_transformed:
         pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
         if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
-            np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
+            np_transformed_depth_frame[int(pixel[1] + 0),int(pixel[0]) + 0] = vert[2]
             
     # Remove rows and columns of all zeros
-    np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
-    np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
     np_final_frame = np_transformed_depth_frame
     
     
@@ -296,7 +254,7 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
     if np.any(np_final_frame):
         contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth)
     
-    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere
+    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix
     # return np_final_frame
 
 def crossSections(np_depth_frame, fulcrumPixelDepth):
@@ -372,13 +330,10 @@ def crossSections(np_depth_frame, fulcrumPixelDepth):
                 ids = map(id, checkedContours)
             if (cv2.pointPolygonTest(parent, (cX, cY), True) >= 0):
                 if i+1 < (len(contourPool) if maxSlice is None else maxSlice):
-                    # print("maxSlice is: {}".format(maxSlice))
-                    # print("i is: {}".format(i))
                     sphereList, _ = buildSphere(parent, i+1, sphereList, contourPool, maxSlice)
                 break
         
         if len(sphereList) > 1:
-            # print("At the end of buildSphere, i is: {}".format(i))
             return sphereList, i
         else:
             return None, None
@@ -464,17 +419,31 @@ depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(90)
     
 # Streaming loop
 frameCounter = random.randrange(0, len(depth_frames))
+savedMaskToggle = False
+savedDepthImage = False
+
+pathToResults = os.path.splitext(filename)[0] + "_results/"
+try:
+    os.mkdir(pathToResults)
+except OSError:
+    pass
+
+np_color_frame = color_frames[frameCounter]
+
+np_depth_frame = depth_frames[frameCounter]
+im = Image.fromarray(np_color_frame)
+im.save(pathToResults + "color_frame.jpg")
+np_color_frame = np_color_frame[...,::-1]
+finalDepthImage_output = None
 
 while True:
-    if currStage == STAGEONE_FLAG:
     
-        np_color_frame = color_frames[frameCounter]
-        np_color_frame = np_color_frame[...,::-1]
-        stageOne_headROI = np.ones(np_color_frame.shape)
-        stageTwo_torsoROI = np.ones(np_color_frame.shape)
+    # Stage 1: Manual head ROI selection
+    if currStage == STAGEONE_FLAG:
         output_image = np_color_frame.copy()
         
         len_headPts = len(stageOne_headPts)
+        # Show selected polygon points and connections
         if len_headPts > 0:
             output_image = cv2.circle(output_image, stageOne_headPts[0], radius=0, color=(255, 0, 0), thickness=-1)
         if len_headPts > 1:
@@ -482,15 +451,27 @@ while True:
                 output_image = cv2.line(output_image, stageOne_headPts[i], stageOne_headPts[i-1], (255, 0, 0), thickness=1)
         if drawingHeadFinished:
             output_image = cv2.line(output_image, stageOne_headPts[-1], stageOne_headPts[0], (255, 0, 0), thickness=1)
+            
+            # Show completed polygon (with alpha channel for some transparancy)
             overlay = output_image.copy()
             overlay = cv2.drawContours(overlay, np.array([stageOne_headPts]), 0, (255, 0, 0), -1)
             alpha = 0.2
             output_image = cv2.addWeighted(overlay, alpha, output_image, 1-alpha, 0)
-            stageOne_headROI = cv2.drawContours(stageOne_headROI, np.array([stageOne_headPts]), 0, 0, -1)
-            np_color_frame_masked_headROI = np.ma.masked_array(np_color_frame, stageOne_headROI)
             
+            # Save area of completed polygon in a numpy masked array for comparison with automatic method
+            stageOne_headROI = np.zeros(np_color_frame.shape[:2])
+            stageOne_headROI = cv2.drawContours(stageOne_headROI, np.array([stageOne_headPts]), 0, 255, -1)
+           
+    # Stage 2: Manual torso ROI selection
     elif currStage == STAGETWO_FLAG:
+        if not savedMaskToggle:
+            im = Image.fromarray(stageOne_headROI)
+            im = im.convert("L")
+            im.save(pathToResults + "headROI_manual.jpg")
+            savedMaskToggle = True
+            
         len_torsoPts = len(stageTwo_torsoPts)
+        # Show selected polygon points and connections
         if len_torsoPts > 0:
             output_image = cv2.circle(output_image, stageTwo_torsoPts[0], radius=0, color=(0, 0, 255), thickness=-1)
         if len_torsoPts > 1:
@@ -498,62 +479,148 @@ while True:
                 output_image = cv2.line(output_image, stageTwo_torsoPts[i], stageTwo_torsoPts[i-1], (0, 0, 255), thickness=1)
         if drawingTorsoFinished:
             output_image = cv2.line(output_image, stageTwo_torsoPts[-1], stageTwo_torsoPts[0], (0, 0, 255), thickness=1)
+            
+            # Show completed polygon (with alpha channel for some transparancy)
             overlay = output_image.copy()
             overlay = cv2.drawContours(overlay, np.array([stageTwo_torsoPts]), 0, (0, 0, 255), -1)
-            alpha = 0.1
+            alpha = 0.2
             output_image = cv2.addWeighted(overlay, alpha, output_image, 1-alpha, 0)
-            stageTwo_torsoROI = cv2.drawContours(stageTwo_torsoROI, np.array([stageTwo_torsoPts]), 0, 0, -1)
-            np_color_frame_masked_torsoROI = np.ma.masked_array(np_color_frame, stageTwo_torsoROI)
+            
+            # Save area of completed polygon in a numpy masked array for comparison with automatic method
+            stageTwo_torsoROI = np.zeros(np_color_frame.shape[:2])
+            stageTwo_torsoROI = cv2.drawContours(stageTwo_torsoROI, np.array([stageTwo_torsoPts]), 0, 255, -1)
         
+    # Stage 3: Automatic head and torso ROI selection (as in depthSliceTool)
     else:
-        np_depth_frame = depth_frames[frameCounter]
-        if len(perspectivePoints) < 4:
-            perspectiveSelectEnabled = True
-        if len(perspectivePoints) == 4:
-            if(DEBUG_FLAG):
-                start_time = time.time()
+        if finalDepthImage_output is None:
+            if savedMaskToggle:
+                im = Image.fromarray(stageTwo_torsoROI)
+                im = im.convert("L")
+                im.save(pathToResults + "torsoROI_manual.jpg")
+                savedMaskToggle = False
             
-            np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints)
-            # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
-            
-            # np_depth_frame_prev = np_depth_frame.copy()
-            
-            if(DEBUG_FLAG):
-                print("--- {}s seconds ---".format((time.time() - start_time)))
-            
-        np_depth_frame_scaled = np_depth_frame * scaling_factor
+            np_depth_frame_orig = np_depth_frame.copy()
+            if len(perspectivePoints) < 4:
+                perspectiveSelectEnabled = True
+            if len(perspectivePoints) == 4:
+                if(DEBUG_FLAG):
+                    start_time = time.time()
                 
-        np_depth_color_frame = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame, alpha=0.03), cv2.COLORMAP_TURBO)
+                np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints)
+                inv_rotMat = np.linalg.inv(rotationMatrix)
+                            
+                if(DEBUG_FLAG):
+                    print("--- {}s seconds ---".format((time.time() - start_time)))
+                
+            np_depth_frame_scaled = np_depth_frame * scaling_factor
+            np_depth_frame_orig_scaled = np_depth_frame_orig * scaling_factor
+                    
+            np_depth_color_frame = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame, alpha=0.03), cv2.COLORMAP_TURBO)
+            np_depth_color_frame_orig = cv2.applyColorMap(cv2.convertScaleAbs(np_depth_frame_orig, alpha=0.03), cv2.COLORMAP_TURBO)
+            
+            finalDepthImage_PT = np_depth_color_frame
+            finalDepthImage = np_depth_color_frame_orig
+            if not savedDepthImage:
+                im = Image.fromarray(finalDepthImage)
+                im.save(pathToResults + "depth_frame.jpg")
+                savedDepthImage = True
+            
+            if len(perspectivePoints) == 4:
+                    
+                # Display final headsphere contours
+                if headSphere is not None:
+                    finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, headSphere, -1, (255, 0, 0), 2)
+                    
+                    # Get points of head contour after PT
+                    headContour_pts = []
+                    for px in headSphere[-1]:
+                        depth = np_depth_frame[px[0][1],px[0][0]]
+                        point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
+                        headContour_pts.append(point)
+                    
+                    # Apply inverse rotation matrix to PT head contour points to get points at original angle
+                    np_headContour_pts = np.asanyarray(headContour_pts)
+                    np_headContour_pts_transformed = inv_rotMat.dot(np_headContour_pts.T).T
+                    
+                    # Project original angle head contour points back to pixels
+                    headContour_pixels = []
+                    for pt in np_headContour_pts_transformed:
+                        pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
+                        headContour_pixels.append(pixel)
+                        
+                    headContour_pixels = np.asanyarray(headContour_pixels)
+                    headContour_pixels = np.absolute(headContour_pixels)
+                    headContour_pixels = headContour_pixels.astype(int)
+                    
+                    finalDepthImage = np_depth_color_frame_orig
+                    
+                    for i in range(1, len(headContour_pixels)):
+                        finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[i], headContour_pixels[i-1], (255, 0, 0), thickness=1)
+                        
+                    finalDepthImage = cv2.line(finalDepthImage, headContour_pixels[-1], headContour_pixels[0], (255, 0, 0), thickness=1)
+                    overlay = finalDepthImage.copy()
+                    overlay = cv2.drawContours(overlay, np.array([headContour_pixels]), 0, (255, 0, 0), -1)
+                    alpha = 0.2
+                    finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
+                        
+                    stageThree_headROI = np.zeros(finalDepthImage.shape[:2])
+                    stageThree_headROI = cv2.drawContours(stageThree_headROI, np.array([headContour_pixels]), 0, 255, -1)
+                    
+                    if not savedMaskToggle:
+                        im = Image.fromarray(stageThree_headROI)
+                        im = im.convert("L")
+                        im.save(pathToResults + "headROI_auto.jpg")
+                        savedMaskToggle = True
+                    
+                # Display final torsoSphere contours
+                if torsoSphere is not None:
+                    finalDepthImage_PT = cv2.drawContours(finalDepthImage_PT, torsoSphere, -1, (0, 0, 255), 2)
+                    
+                    # Get points of head contour after PT
+                    torsoContour_pts = []
+                    for px in torsoSphere[-1]:
+                        depth = np_depth_frame[px[0][1],px[0][0]]
+                        point = rs.rs2_deproject_pixel_to_point(intrinsics, (px[0][0], px[0][1]), depth)
+                        torsoContour_pts.append(point)
+                    
+                    # Apply inverse rotation matrix to PT head contour points to get points at original angle
+                    np_torsoContour_pts = np.asanyarray(torsoContour_pts)
+                    np_torsoContour_pts_transformed = inv_rotMat.dot(np_torsoContour_pts.T).T
+                    
+                    # Project original angle head contour points back to pixels
+                    torsoContour_pixels = []
+                    for pt in np_torsoContour_pts_transformed:
+                        pixel = rs.rs2_project_point_to_pixel(intrinsics, pt)
+                        torsoContour_pixels.append(pixel)
+                        
+                    torsoContour_pixels = np.asanyarray(torsoContour_pixels)
+                    torsoContour_pixels = np.absolute(torsoContour_pixels)
+                    torsoContour_pixels = torsoContour_pixels.astype(int)
+                    
+                    
+                    for i in range(1, len(torsoContour_pixels)):
+                        finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[i], torsoContour_pixels[i-1], (0, 0, 255), thickness=1)
+                    
+                    finalDepthImage = cv2.line(finalDepthImage, torsoContour_pixels[-1], torsoContour_pixels[0], (0, 0, 255), thickness=1)
+                    overlay = finalDepthImage.copy()
+                    overlay = cv2.drawContours(overlay, np.array([torsoContour_pixels]), 0, (0, 0, 255), -1)
+                    alpha = 0.2
+                    finalDepthImage = cv2.addWeighted(overlay, alpha, finalDepthImage, 1-alpha, 0)
+                        
+                    stageThree_torsoROI = np.zeros(finalDepthImage.shape[:2])
+                    stageThree_torsoROI = cv2.drawContours(stageThree_torsoROI, np.array([torsoContour_pixels]), 0, 255, -1)
+                    
+                    if savedMaskToggle:
+                        im = Image.fromarray(stageThree_torsoROI)
+                        im = im.convert("L")
+                        im.save(pathToResults + "torsoROI_auto.jpg")
+                        savedMaskToggle = False
+                        finalDepthImage_output = finalDepthImage.copy()
         
-        finalDepthImage = np_depth_color_frame
-        
-        if len(perspectivePoints) == 4:
+            output_image = finalDepthImage
             
-            for cons in contours_filteredArea:
-                finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,255), 2)
-            
-            # if maxHeadSlice is not None:
-            #     for i in range(maxHeadSlice):
-            #         finalDepthImage = cv2.drawContours(finalDepthImage, contours_filteredArea[i], -1, (0,0,255), 2)
-                
-            # for cons in contours_filteredCircularity:
-            #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (0,0,255), 2)
-                
-            # Display final headsphere contours
-            if headSphere is not None:
-                finalDepthImage = cv2.drawContours(finalDepthImage, headSphere, -1, (255, 0, 0), 2)
-                
-            if torsoSphere is not None:
-                finalDepthImage = cv2.drawContours(finalDepthImage, torsoSphere, -1, (0,0,255), 2)
-                # finalDepthImage = cv2.drawContours(finalDepthImage, [torsoSphere[-1]], -1, (0,0,255), -1)
-                
-                roi = np.ones(np_depth_frame.shape)
-                roi = cv2.drawContours(roi, [torsoSphere[-1]], -1, 0, -1)
-                
-            # for cons in contours_filteredRectangularity:
-            #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,0), 1)
-    
-        output_image = finalDepthImage
+        else:
+            output_image = finalDepthImage_output
         
     # Render image in opencv window
     cv2.imshow(windowName, output_image)
@@ -561,19 +628,9 @@ while True:
     # If user presses ESCAPE or clicks the close button, end    
     key = cv2.waitKey(1)
     if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
-        # if len(avgTorsoDepth) > 0:
-        #     avgTorsoDepth_filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
-        #     with open(avgTorsoDepth_filename, 'w') as f:
-        #         csvWriter = csv.writer(f)
-        #         csvWriter.writerow(["Mean Depth", "Timestamp"])
-        #         csvWriter.writerows(avgTorsoDepth)
-                
-        # if PTError is not None:
-        #     PTError_filename = os.path.splitext(filename)[0] + "_PerspectiveTransformError.csv"
-        #     with open(PTError_filename, 'w') as f:
-        #         csvWriter = csv.writer(f)
-        #         csvWriter.writerow(["Angle (rad)", "Axis", "Absolute Error (%)"])
-        #         csvWriter.writerow([PTAngle, PTAxis, PTError])
+        
+        
+        
         cv2.destroyAllWindows()
         break
         
