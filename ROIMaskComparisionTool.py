@@ -68,6 +68,13 @@ def main():
         print(dice_head)
         print(dice_torso)
         
+        falsePos = lambda auto, manual : np.sum(auto[manual==0]) / np.sum(auto)
+        
+        falsePos_head = falsePos(np_headROI_auto, np_headROI_manual)
+        falsePos_torso = falsePos(np_torsoROI_auto, np_torsoROI_manual)
+        print(falsePos_head)
+        print(falsePos_torso)
+        
         
 if __name__ == "__main__":
     main()
