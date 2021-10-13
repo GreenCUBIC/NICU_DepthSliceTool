@@ -24,6 +24,7 @@ STAGETWO_FLAG = "STAGE_TWO"
 STAGETHREE_FLAG = "STAGE_THREE"
 DEBUG_FLAG = False
 PTERROR_REPORT = True
+SELECT_MIDDLE_FRAME = True
 
 windowName = "ROI Selection/Comparision Tool"
 
@@ -418,7 +419,8 @@ def bufferVideo(nFrames):
 depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(90)
     
 # Streaming loop
-frameCounter = random.randrange(0, len(depth_frames))
+frameCounter = int(len(depth_frames)/2) if SELECT_MIDDLE_FRAME else random.randrange(0, len(depth_frames))
+print(frameCounter)
 savedMaskToggle = False
 savedDepthImage = False
 
