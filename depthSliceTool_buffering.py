@@ -78,12 +78,13 @@ rotationMatrix = None
 fulcrumPixel_idx = None
 depthPoints = []
 perspectivePoints = []
-avgTorsoDepth = []
+avgTorsoDepth = [[0, 0]]
 np_depth_frame_prev = None
 np_depth_frame_prev_prev = None
 PTError = None
 PTAngle = None
 PTAxis = None
+AAtest = None
 
 def buttonHandler(*args):
     global depthSelectEnabled, perspectiveSelectEnabled, perspectivePoints, rgbOverlayEnabled
@@ -476,6 +477,7 @@ cv2.createButton("Toggle Depth Selector", buttonHandler, DSENABLE, cv2.QT_PUSH_B
 cv2.createButton("Perspective Transformation", buttonHandler, PTENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 
 def bufferVideo(nFrames):
+    global AAtest
     print("Buffering {} frames".format(nFrames))
     
     depth_frames = []
@@ -493,7 +495,11 @@ def bufferVideo(nFrames):
         np_color_frame = np.asanyarray(color_frame.get_data())
         depth_frames.append(np_depth_frame.copy())
         color_frames.append(np_color_frame.copy())
-        timestamps.append(aligned_frame.get_timestamp())
+        frameTime = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival) / 1000
+        systemTime = datetime.datetime.fromtimestamp(frameTime)
+        timestamps.append(systemTime)
+
+        # AAtest = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival)
         
     return depth_frames, color_frames, timestamps, depth_frame.get_units()
 
@@ -597,11 +603,11 @@ while frameCounter < len(depth_frames):
             np_ma_torsoROI = np.ma.masked_array(np_depth_frame, mask=roi)
             if (DEBUG_FLAG):
                 print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), timestamps[frameCounter]))
-            if not isPaused:
-                avgTorsoDepth.append([np_ma_torsoROI.mean(), timestamps[frameCounter]])
-            
+            if not isPaused and timestamps[frameCounter] != avgTorsoDepth[-1][1]:
+                avgTorsoDepth.append([timestamps[frameCounter], np_ma_torsoROI.mean()])
+        
+        # Anthropomorphic checks
         if torsoSphere is not None and headSphere is not None:
-            # Anthropomorphic checks
 
             MHead = cv2.moments(headSphere[-1])
             cXHead = int(MHead["m10"] / MHead["m00"])
@@ -631,7 +637,6 @@ while frameCounter < len(depth_frames):
             torsoDists, torsoPts = testContourLine(torsoSphere[-1])
             print(headDists[0])
             print(torsoDists[0])
-            ## constrain between centers
 
             headDists, headPts = (list(t) for t in zip(*sorted(zip(headDists, headPts))))
             torsoDists, torsoPts = (list(t) for t in zip(*sorted(zip(torsoDists, torsoPts))))
@@ -690,7 +695,7 @@ while frameCounter < len(depth_frames):
             avgTorsoDepth_filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
             with open(avgTorsoDepth_filename, 'w') as f:
                 csvWriter = csv.writer(f)
-                csvWriter.writerow(["Mean Depth", "Timestamp"])
+                csvWriter.writerow(["Timestamp", "Mean Depth"])
                 csvWriter.writerows(avgTorsoDepth)
                 
         if PTError is not None:
