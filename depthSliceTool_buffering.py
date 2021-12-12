@@ -19,12 +19,13 @@ import os
 import csv
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
+import libdst
 
 DSENABLE = "DEPTH_SELECT_ENABLE"
 PTENABLE = "PERSPECTIVE_TRANSFORM_ENABLE"
 RGBENABLE = "RGB_OVERLAY_ENABLE"
 DEBUG_FLAG = False
-PTERROR_REPORT = True
+END_OF_BUFFER = False
 
 windowName = "DepthSlice Tool"
 slider1Name = "Slice depth (increments of 0.001)"
@@ -85,6 +86,7 @@ PTError = None
 PTAngle = None
 PTAxis = None
 AAtest = None
+fulcrumPixel_idx = None
 
 def buttonHandler(*args):
     global depthSelectEnabled, perspectiveSelectEnabled, perspectivePoints, rgbOverlayEnabled
@@ -110,337 +112,6 @@ def mouseEvent(action, x, y, flags, *userdata):
             else:
                 perspectivePoints = []
                 perspectivePoints.append((x, y))
-                
-def displayDepthPoints(depth_frame_scaled, output):
-    global depthPoints
-    # Display depth of selected points on frame
-    for point in depthPoints:
-        depth = depth_frame_scaled[point[1], point[0]].astype(str)
-        cv2.putText(output,
-                    depth,
-                    point, 
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=0.3,
-                    color=(255,255,255),
-                    )
-        if (DEBUG_FLAG): 
-            print("x: {}, y: {}, Depth: {}".format(point[0], point[1], depth))
-        
-def npShift(arr, numX, numY, fill_value=0):
-    result = np.empty_like(arr)
-    if numX > 0:
-        result[:numX,:] = fill_value
-        result[numX:,:] = arr[:-numX,:]
-    elif numX < 0:
-        result[numX:,:] = fill_value
-        result[:numX,:] = arr[-numX:,:]
-    else:
-        result[:] = arr
-        
-    if numY > 0:
-        result[:,:numY] = fill_value
-        result[:,numY:] = arr[:,:-numY]
-    elif numX < 0:
-        result[:,numY:] = fill_value
-        result[:,:numY] = arr[:,-numY:]
-    else:
-        result[:] = result
-        
-    return result
-
-def calculateRotationMatrix(points):
-    global PTError, PTAngle, PTAxis
-    
-    rMatrices = []
-    rAngles = []
-    rAxes = []
-    tpDiffs = []
-    tpComparision = []
-    for pointIndex in range(len(points)):
-        vAB = np.subtract(points[(pointIndex + 1) % 4], points[pointIndex])
-        vAC = np.subtract(points[(pointIndex + 3) % 4], points[pointIndex])
-        normalVector = np.cross(vAB, vAC)
-        normalVector = normalVector / np.linalg.norm(normalVector)
-        newNormal = np.array([0, 0, -1])
-        rAxis = np.cross(normalVector, newNormal)
-        rAxis = rAxis / np.linalg.norm(rAxis)
-        rAngle = np.arccos(np.dot(normalVector, newNormal))
-        rAxisCMatrix = np.array([[0, -rAxis[2], rAxis[1]],
-                                 [rAxis[2], 0, -rAxis[0]],
-                                 [-rAxis[1], rAxis[0], 0]])
-        rotationMatrix = (np.cos(rAngle)*np.identity(3)) + ((np.sin(rAngle)*rAxisCMatrix) +((1-np.cos(rAngle))*(np.outer(rAxis, rAxis))))
-        rMatrices.append(rotationMatrix)
-        
-        if (DEBUG_FLAG):
-            print("Normal Vector: {}".format(normalVector))
-            print("rAxis: {}".format(rAxis))
-            print("rAngle: {}".format(rAngle))
-            print("Rotation Matrix: {}".format(rotationMatrix))
-        
-        rAngles.append(rAngle)
-        rAxes.append(np.array2string(rAxis))
-        
-        testPoints = rotationMatrix.dot(np.asanyarray(points).T).T
-        testPointDiff = testPoints[(pointIndex + 2 ) % 4, 2] - testPoints[pointIndex, 2]
-        tpComparision.append(testPoints[pointIndex, 2])
-        tpDiffs.append(abs(testPointDiff))
-        
-    temp = min(tpDiffs)
-    minIdx = [i for i, j in enumerate(tpDiffs) if j == temp]
-    minIdx = minIdx[0] if isinstance(minIdx, list) else minIdx
-    
-    if (PTERROR_REPORT):
-        PTError = (tpDiffs[minIdx] / tpComparision[minIdx]) * 100
-        PTAngle = rAngles[minIdx]
-        PTAxis = rAxes[minIdx]
-    
-    if (DEBUG_FLAG):
-        print("Chosen rotation point: {}".format(minIdx))
-        
-    return rMatrices[minIdx], ((minIdx + 2) % 4)
-        
-def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints):
-    global pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev
-    points = []
-    # camera_intrinsic_matrix = np.array([[intrinsics.fx, 0, intrinsics.ppx],
-    #                                     [0, intrinsics.fy, intrinsics.ppy],
-    #                                     [0, 0, 1]])
-    # camera_rotation_matrix = np.identity(3)
-    # camera_translation_matrix = np.array([0.0, 0.0, 0.0])
-    # distortion_coeffs = np.asanyarray(intrinsics.coeffs)
-    
-    for pixel in perspectivePoints:
-        depth = np_depth_frame[pixel[1],pixel[0]]
-        point = rs.rs2_deproject_pixel_to_point(intrinsics, pixel, depth)
-        points.append(point)
-    
-    if rotationMatrix is None:
-        rotationMatrix, fulcrumPixel_idx = calculateRotationMatrix(points)
-    
-    cropPointsX = list(map(lambda p: p[0], perspectivePoints))
-    cropPointsY = list(map(lambda p: p[1], perspectivePoints))
-    minCropX = min(cropPointsX)
-    maxCropX = max(cropPointsX) + 1
-    minCropY = min(cropPointsY)
-    maxCropY = max(cropPointsY) + 1
-    
-    if (DEBUG_FLAG):
-        print(perspectivePoints)
-        
-    pPoints = []
-    for point in perspectivePoints:
-        pX = point[0] - minCropX
-        pY = point[1] - minCropY
-        pPoints.append((pX, pY))
-        
-    if (DEBUG_FLAG):
-        print(pPoints)
-    
-    np_depth_frame = np_depth_frame[minCropY:maxCropY, minCropX:maxCropX]
-    
-    # Black out pixels that have not changed since the last frame
-    # NOT WORKING YET
-    
-    # np_depth_frame_cp = np_depth_frame.copy()
-    # if not isPaused and np_depth_frame_prev is not None and np_depth_frame_prev_prev is not None and np_depth_frame.shape == np_depth_frame_prev.shape:
-    #     diffPixels = cv2.absdiff(np_depth_frame, np_depth_frame_prev)
-    #     diffPixels_prev = cv2.absdiff(np_depth_frame, np_depth_frame_prev_prev)
-    #     staticPixels = (diffPixels > 5)
-    #     staticPixels_prev = (diffPixels > 5)
-        
-    #     staticOverPrev = (np.logical_or(staticPixels, staticPixels_prev)) * 1.0
-    #     print(staticOverPrev)
-    #     print(np_depth_frame)
-    #     print(staticOverPrev.shape)
-    #     np_depth_frame = np_depth_frame * staticOverPrev
-    
-    # if np_depth_frame_prev is not None:
-    #     np_depth_frame_prev_prev = np_depth_frame_prev.copy()
-    # np_depth_frame_prev = np_depth_frame_cp
-        
-    
-    fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
-    fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
-    fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
-    
-    verts = []
-    for ix, iy in np.ndindex(np_depth_frame.shape):
-        depth = np_depth_frame[ix, iy]
-        point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
-        verts.append(point)
-    
-    np_verts = np.asanyarray(verts)
-    # pcPoints = pc.calculate(depth_frame)
-    # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
-    
-    np_verts_transformed = rotationMatrix.dot(np_verts.T).T
-    np_verts_transformed = np_verts_transformed[~np.all(np_verts_transformed == 0, axis=1)]
-    np_verts_transformed = np_verts_transformed
-    
-    # project back to 2D image with depth as data (WORKING BUT SLOW)   
-    np_transformed_depth_frame = np.zeros([1080,1920])
-    for vert in np_verts_transformed:
-        pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
-        if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
-            np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
-            
-    # Remove rows and columns of all zeros
-    np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
-    np_transformed_depth_frame = np_transformed_depth_frame[:, ~np.all(np_transformed_depth_frame == 0, axis=0)]
-    np_final_frame = np_transformed_depth_frame
-    
-    
-        
-    # OpenCV dilation
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
-    np_dilated_depth_frame = cv2.dilate(np_final_frame, kernel)
-    np_final_frame = np_dilated_depth_frame
-    np_eroded_depth_frame = cv2.erode(np_dilated_depth_frame, kernel)
-    np_final_frame = np_eroded_depth_frame
-    
-    
-    # fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
-    # fulcrumPixelDepth = fulcrumPoint[2] * scaling_factor
-    contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = None, None, None, None, None, None, None
-    if np.any(np_final_frame):
-        contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth)
-    
-    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere
-    # return np_final_frame
-
-def crossSections(np_depth_frame, fulcrumPixelDepth):
-    global scaling_factor
-    
-    np_depth_frame = np_depth_frame * scaling_factor
-    minDepth = np.min(np_depth_frame[np_depth_frame != 0])
-    bedDepth = fulcrumPixelDepth
-    sliceInc = (bedDepth - minDepth) / 20
-    
-    if (DEBUG_FLAG):
-        print("minDepth: {}".format(minDepth))
-        print("bedDepth: {}".format(bedDepth))
-    
-    np_depth_frame[np_depth_frame == 0] = bedDepth + 1
-    
-    sliceDepth = minDepth
-    cross_section_frames = []
-    for i in range(19):
-        np_depth_frame_mask = (np_depth_frame <= sliceDepth) * 1.0
-        cross_section_frames.append(np_depth_frame_mask)        
-        sliceDepth = sliceDepth + sliceInc
-        
-    # Find contours for each slice and filter to different criteria
-    allContours = []
-    allContours_area = []
-    allContours_circularity = []
-    for np_cs_frame in cross_section_frames:
-        np_cs_frame = np_cs_frame.astype(np.uint8)
-        contours, hierarchy = cv2.findContours(np_cs_frame, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        
-        contours_filteredArea = []
-        for con in contours:
-            area = cv2.contourArea(con)
-            if 100 < area:
-                contours_filteredArea.append(con)
-            
-        contours_filteredCircularity = []
-        for con in contours_filteredArea:
-            perimeter = cv2.arcLength(con, True)
-            area = cv2.contourArea(con)
-            if perimeter == 0:
-                break
-            circularity = 4*math.pi*(area/(perimeter*perimeter))
-            if 0.50 < circularity < 1.50:
-                contours_filteredCircularity.append(con)
-                
-        allContours.append(contours)
-        allContours_area.append(contours_filteredArea)
-        allContours_circularity.append(contours_filteredCircularity)
-                
-        if (DEBUG_FLAG):
-            print("Contours: {}".format(len(contours)))
-            print("Contours (after area filter): {}".format(len(contours_filteredArea)))
-            print("Contours (after circle filter): {}".format(len(contours_filteredCircularity)))
-        
-    # Find head sphere contours
-    headSpheres = []
-    checkedContours = []
-    checkedIds = []
-    maxSlice_headSpheres = []
-    
-    def buildSphere(child, i, sphereList, contourPool, maxSlice=None):
-        sphereList.append(child)
-        checkedContours.append(child)
-        M = cv2.moments(child)
-        cX = int(M["m10"] / M["m00"])
-        cY = int(M["m01"] / M["m00"])
-        
-        for parent in contourPool[i]:
-            if not (id(parent) in checkedIds):
-                checkedContours.append(checkedContours)
-                ids = map(id, checkedContours)
-            if (cv2.pointPolygonTest(parent, (cX, cY), True) >= 0):
-                if i+1 < (len(contourPool) if maxSlice is None else maxSlice):
-                    # print("maxSlice is: {}".format(maxSlice))
-                    # print("i is: {}".format(i))
-                    sphereList, _ = buildSphere(parent, i+1, sphereList, contourPool, maxSlice)
-                break
-        
-        if len(sphereList) > 1:
-            # print("At the end of buildSphere, i is: {}".format(i))
-            return sphereList, i
-        else:
-            return None, None
-    
-    for i in range(len(allContours_circularity)-1):
-        for child in allContours_circularity[i]:
-            if not (id(child) in checkedIds):
-                sphere, maxHeadSlice = buildSphere(child, i+1, [], allContours_circularity)
-                if sphere is not None:
-                    headSpheres.append(sphere)
-                    maxSlice_headSpheres.append(maxHeadSlice)
-                
-    if (DEBUG_FLAG):
-        print("Number of headSpheres: {}".format(len(headSpheres)))
-    
-    headSphere = None
-    maxHeadSlice = None
-    if len(headSpheres) > 0:
-        headSphereCircularityErrs = []
-        for sphere in headSpheres:
-            perimeter = cv2.arcLength(sphere[-1], True)
-            area = cv2.contourArea(sphere[-1])
-            circularity = 4*math.pi*(area/(perimeter*perimeter))
-            headSphereCircularityErrs.append(abs(1-circularity))
-        
-        chosenHeadSphere_idx = headSphereCircularityErrs.index(min(headSphereCircularityErrs))
-        headSphere = headSpheres[chosenHeadSphere_idx]
-        maxHeadSlice = maxSlice_headSpheres[chosenHeadSphere_idx]
-    
-    # Find torso cuboid contours
-    torsoSpheres = []
-    checkedContours = []
-    checkedIds = []
-    
-    if maxHeadSlice is not None:
-        for i in range(maxHeadSlice):
-            for child in allContours_area[i]:
-                if not (id(child) in checkedIds):
-                    sphere, _ = buildSphere(child, i+1, [], allContours_area, maxHeadSlice)
-                    if sphere is not None:
-                        torsoSpheres.append(sphere)
-                    
-    torsoSphere = None
-    if len(torsoSpheres) > 0:
-        torsoSphereAreas = []
-        for sphere in torsoSpheres:
-            area = cv2.contourArea(sphere[-1])
-            torsoSphereAreas.append(area)
-            
-        chosenTorsoSphere_idx = torsoSphereAreas.index(max(torsoSphereAreas))
-        torsoSphere = torsoSpheres[chosenTorsoSphere_idx]
-    
-    return allContours, allContours_area, allContours_circularity, headSphere, headSpheres, maxHeadSlice, torsoSphere
 
 # Handle frame updates when depth sliders are changed
 def updateFrame(arg):
@@ -483,6 +154,7 @@ def bufferVideo(nFrames):
     depth_frames = []
     color_frames = []
     timestamps = []
+    epochtime = []
     for i in range(nFrames):
         frame = pipeline.wait_for_frames()
         aligned_frame = align.process(frame)
@@ -495,20 +167,22 @@ def bufferVideo(nFrames):
         np_color_frame = np.asanyarray(color_frame.get_data())
         depth_frames.append(np_depth_frame.copy())
         color_frames.append(np_color_frame.copy())
-        frameTime = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival) / 1000
+        epochtime.append(aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival) // 100)
+        frameTime = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival) // 1000
         systemTime = datetime.datetime.fromtimestamp(frameTime)
         timestamps.append(systemTime)
 
         # AAtest = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival)
         
-    return depth_frames, color_frames, timestamps, depth_frame.get_units()
+    return depth_frames, color_frames, timestamps, depth_frame.get_units(), epochtime
 
-depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(90)
+depth_frames, color_frames, timestamps, scaling_factor, epochtime = bufferVideo(18500)
     
+savedTimestamp = None
 # Streaming loop
 frameCounter = 0
 while frameCounter < len(depth_frames):
-    # print(frameCounter)
+    print(frameCounter)
     np_depth_frame = depth_frames[frameCounter]
     np_color_frame = color_frames[frameCounter]
     
@@ -519,13 +193,26 @@ while frameCounter < len(depth_frames):
     if frameCounter == len(depth_frames):
         frameCounter = 0
         
+    # ONLY FOR TESTING
+    if frameCounter == len(depth_frames)-1:
+        END_OF_BUFFER = True
+
+    # if not isPaused:
+    #     # ONLY FOR TESTING
+    #     if savedTimestamp == timestamps[frameCounter]:
+    #         continue
+    #     else:
+    #         savedTimestamp = timestamps[frameCounter]
+
+        
     np_color_frame = np_color_frame[...,::-1]
         
     if len(perspectivePoints) == 4:
         if(DEBUG_FLAG):
             start_time = time.time()
         
-        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints)
+        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG)
+        PTError, PTAngle, PTAxis = errs
         # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         
         # np_depth_frame_prev = np_depth_frame.copy()
@@ -553,7 +240,7 @@ while frameCounter < len(depth_frames):
     
     slider1Arg, slice1At, slider2Arg, slice2At = updateFrame(0)
     finalDepthImage = np_depth_color_frame_masked
-    displayDepthPoints(np_depth_frame_scaled, finalDepthImage)
+    libdst.displayDepthPoints(np_depth_frame_scaled, finalDepthImage, depthPoints, DEBUG_FLAG)
     
     if len(perspectivePoints) == 4:
         
@@ -570,7 +257,7 @@ while frameCounter < len(depth_frames):
         # Display final headsphere contours
         if headSphere is not None:
             finalDepthImage = cv2.drawContours(finalDepthImage, headSphere, -1, (255, 0, 0), 2)
-            print("Head contours:")
+            # print("Head contours:")
             for c in headSphere:
                 M = cv2.moments(c)
                 cX = int(M["m10"] / M["m00"])
@@ -579,13 +266,13 @@ while frameCounter < len(depth_frames):
                 perimeter = cv2.arcLength(c, True)
                 circularity = 4*math.pi*(area/(perimeter*perimeter))
                 equi_diameter = np.sqrt(4*area/np.pi)
-                print("Center: ({}, {}); Area: {}; Equivalent diameter: {}; Circularity: {}".format(cX, cY, area, equi_diameter, circularity))
-            print("")
+            #     print("Center: ({}, {}); Area: {}; Equivalent diameter: {}; Circularity: {}".format(cX, cY, area, equi_diameter, circularity))
+            # print("")
            
         if torsoSphere is not None:
             finalDepthImage = cv2.drawContours(finalDepthImage, torsoSphere, -1, (0,0,255), 2)
             # finalDepthImage = cv2.drawContours(finalDepthImage, [torsoSphere[-1]], -1, (0,0,255), -1)
-            print("Torso contours:")
+            # print("Torso contours:")
             for c in torsoSphere:
                 M = cv2.moments(c)
                 cX = int(M["m10"] / M["m00"])
@@ -594,8 +281,8 @@ while frameCounter < len(depth_frames):
                 perimeter = cv2.arcLength(c, True)
                 circularity = 4*math.pi*(area/(perimeter*perimeter))
                 equi_diameter = np.sqrt(4*area/np.pi)
-                print("Center: ({}, {}); Area: {}; Equivalent diameter: {}; Circularity: {}".format(cX, cY, area, equi_diameter, circularity))
-            print("")
+            #     print("Center: ({}, {}); Area: {}; Equivalent diameter: {}; Circularity: {}".format(cX, cY, area, equi_diameter, circularity))
+            # print("")
             
             roi = np.ones(np_depth_frame.shape)
             roi = cv2.drawContours(roi, [torsoSphere[-1]], -1, 0, -1)
@@ -603,74 +290,93 @@ while frameCounter < len(depth_frames):
             np_ma_torsoROI = np.ma.masked_array(np_depth_frame, mask=roi)
             if (DEBUG_FLAG):
                 print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), timestamps[frameCounter]))
-            if not isPaused and timestamps[frameCounter] != avgTorsoDepth[-1][1]:
+
+            # # Keep this or the one after, not both
+            # if not isPaused and timestamps[frameCounter] != avgTorsoDepth[-1][0]:
+            #     avgTorsoDepth.append([timestamps[frameCounter], np_ma_torsoROI.mean()])
+
+            if not isPaused:
                 avgTorsoDepth.append([timestamps[frameCounter], np_ma_torsoROI.mean()])
         
         # Anthropomorphic checks
-        if torsoSphere is not None and headSphere is not None:
+        # TURNED OFF TO SAVE TIME AND RECORD AVERAGE TORSO DEPTH
+        # if torsoSphere is not None and headSphere is not None:
 
-            MHead = cv2.moments(headSphere[-1])
-            cXHead = int(MHead["m10"] / MHead["m00"])
-            cYHead = int(MHead["m01"] / MHead["m00"])
+        #     MHead = cv2.moments(headSphere[-1])
+        #     cXHead = int(MHead["m10"] / MHead["m00"])
+        #     cYHead = int(MHead["m01"] / MHead["m00"])
 
-            MTorso = cv2.moments(torsoSphere[-1])
-            cXTorso = int(MTorso["m10"] / MTorso["m00"])
-            cYTorso = int(MTorso["m01"] / MTorso["m00"])
-            centerDistance = np.sqrt(((cXTorso - cXHead) ** 2) + ((cYTorso - cYHead) ** 2))
-            print("Distance between centers of the largest contours: {}".format(centerDistance))
+        #     MTorso = cv2.moments(torsoSphere[-1])
+        #     cXTorso = int(MTorso["m10"] / MTorso["m00"])
+        #     cYTorso = int(MTorso["m01"] / MTorso["m00"])
+        #     centerDistance = np.sqrt(((cXTorso - cXHead) ** 2) + ((cYTorso - cYHead) ** 2))
+        #     # print("Distance between centers of the largest contours: {}".format(centerDistance))
 
-            slope = (cYTorso - cYHead) / (cXTorso - cXHead)
+        #     slope = (cYTorso - cYHead) / (cXTorso - cXHead)
 
-            line = lambda x : cYHead + (slope * (x - cXHead))
+        #     line = lambda x : cYHead + (slope * (x - cXHead))
 
-            def testContourLine(contour, tolerance=3, line=line):
-                distances, ptsOnLine = [], []
-                for c in contour:
-                    # if (abs(c[0][1] - line(c[0][0])) <= tolerance):
-                    #     ptsOnLine.append((c[0][0], c[0][1]))
-                    distances.append(abs(c[0][1] - line(c[0][0])))
-                    ptsOnLine.append((c[0][0], c[0][1]))
+        #     def testContourLine(contour, tolerance=3, line=line):
+        #         distances, ptsOnLine = [], []
+        #         for c in contour:
+        #             # if (abs(c[0][1] - line(c[0][0])) <= tolerance):
+        #             #     ptsOnLine.append((c[0][0], c[0][1]))
+        #             distances.append(abs(c[0][1] - line(c[0][0])))
+        #             ptsOnLine.append((c[0][0], c[0][1]))
 
-                return distances, ptsOnLine
+        #         return distances, ptsOnLine
 
-            headDists, headPts = testContourLine(headSphere[-1])
-            torsoDists, torsoPts = testContourLine(torsoSphere[-1])
-            print(headDists[0])
-            print(torsoDists[0])
+        #     headDists, headPts = testContourLine(headSphere[-1])
+        #     torsoDists, torsoPts = testContourLine(torsoSphere[-1])
+        #     # print(headDists[0])
+        #     # print(torsoDists[0])
 
-            headDists, headPts = (list(t) for t in zip(*sorted(zip(headDists, headPts))))
-            torsoDists, torsoPts = (list(t) for t in zip(*sorted(zip(torsoDists, torsoPts))))
-            headConPt = None
-            torsoConPt = None
-            for pt in headPts:
-                if ((pt[0] >= min(cXHead, cXTorso) and pt[0] <= max(cXHead, cXTorso))) and ((pt[1] >= min(cYHead, cYTorso) and pt[1] <= max(cYHead, cYTorso))):
-                    headConPt = pt
-                    break
+        #     headDists, headPts = (list(t) for t in zip(*sorted(zip(headDists, headPts))))
+        #     torsoDists, torsoPts = (list(t) for t in zip(*sorted(zip(torsoDists, torsoPts))))
+        #     headConPt = None
+        #     torsoConPt = None
+        #     for pt in headPts:
+        #         if ((pt[0] >= min(cXHead, cXTorso) and pt[0] <= max(cXHead, cXTorso))) and ((pt[1] >= min(cYHead, cYTorso) and pt[1] <= max(cYHead, cYTorso))):
+        #             headConPt = pt
+        #             break
 
-            for pt in torsoPts:
-                if ((pt[0] >= min(cXHead, cXTorso) and pt[0] <= max(cXHead, cXTorso))) and ((pt[1] >= min(cYHead, cYTorso) and pt[1] <= max(cYHead, cYTorso))):
-                    torsoConPt = pt
-                    break
+        #     for pt in torsoPts:
+        #         if ((pt[0] >= min(cXHead, cXTorso) and pt[0] <= max(cXHead, cXTorso))) and ((pt[1] >= min(cYHead, cYTorso) and pt[1] <= max(cYHead, cYTorso))):
+        #             torsoConPt = pt
+        #             break
 
-            # print(headDists[0])
-            # print(torsoDists[0])
-            print(headConPt)
-            print(torsoConPt)
+        #     # print(headDists[0])
+        #     # print(torsoDists[0])
+        #     # print(headConPt)
+        #     # print(torsoConPt)
 
-            finalDepthImage = cv2.line(finalDepthImage, headConPt, torsoConPt, (0, 0, 0), thickness=2)
-            neckDistance = math.hypot(headConPt[0]-torsoConPt[0], headConPt[1]-torsoConPt[1])
-            print("Neck distance: {}".format(neckDistance))
-            headEllipse = cv2.fitEllipse(headSphere[-1])
-            print(headEllipse)
-            torsoEllipse = cv2.fitEllipse(torsoSphere[-1])
-            print(torsoEllipse[-1])
-            print(math.degrees(math.atan(slope)) + 90)
+        #     finalDepthImage = cv2.line(finalDepthImage, headConPt, torsoConPt, (0, 0, 0), thickness=2)
+        #     neckDistance = math.hypot(headConPt[0]-torsoConPt[0], headConPt[1]-torsoConPt[1])
+        #     # print("Neck distance: {}".format(neckDistance))
+        #     headEllipse = cv2.fitEllipse(headSphere[-1])
+        #     # print(headEllipse)
+        #     torsoEllipse = cv2.fitEllipse(torsoSphere[-1])
+        #     # print(torsoEllipse[-1])
+        #     # print(math.degrees(math.atan(slope)) + 90)
 
-            # finalDepthImage = cv2.ellipse(finalDepthImage, headEllipse, (0, 0, 0), 2)
-            finalDepthImage = cv2.ellipse(finalDepthImage, torsoEllipse, (255, 255, 255), 2)
+        #     # Evaluate fitted ellipse (compare to the detected ROIs)
+        #     torsoROI_detected_arr = np.zeros(finalDepthImage.shape[:2])
+        #     torsoROI_detected_arr = cv2.drawContours(torsoROI_detected_arr, np.array([torsoSphere[-1]]), 0, 1, -1)
+        #     torsoROI_detected_arr = torsoROI_detected_arr != 0
+
+        #     torsoROI_ellipse_arr = np.zeros(finalDepthImage.shape[:2])
+        #     torsoROI_ellipse_arr = cv2.ellipse(torsoROI_ellipse_arr, torsoEllipse, 1, -1)
+        #     torsoROI_ellipse_arr = torsoROI_ellipse_arr != 0
+
+        #     dice = lambda ellipse, detected : np.sum(ellipse[detected==1])*2.0 / (np.sum(ellipse) + np.sum(detected))
+        #     dice_torso_ellipse = dice(torsoROI_ellipse_arr, torsoROI_detected_arr)
+        #     # print("Dice-Sorenson of torso (taking detected as Actual and ellipse as Predicted) is: {}".format(dice_torso_ellipse))
+
+        #     # finalDepthImage = cv2.ellipse(finalDepthImage, headEllipse, (0, 0, 0), 2)
+        #     finalDepthImage = cv2.ellipse(finalDepthImage, torsoEllipse, (255, 255, 255), 2)
 
         
-            # print(headSphere[-1][n][0])
+        #     # print(headSphere[-1][n][0])
 
         # for cons in contours_filteredRectangularity:
         #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,0), 1)
@@ -682,7 +388,7 @@ while frameCounter < len(depth_frames):
             np_color_frame_masked[:, :, i] = np_color_frame_masked[:, :, i] * np_depth_frame_bool
             
         finalColorImage = np_color_frame_masked
-        displayDepthPoints(np_depth_frame_scaled, finalColorImage)
+        libdst.displayDepthPoints(np_depth_frame_scaled, finalColorImage, depthPoints, DEBUG_FLAG)
         output_image = finalColorImage
     
     # Render image in opencv window
@@ -690,7 +396,7 @@ while frameCounter < len(depth_frames):
 
     # If user presses ESCAPE or clicks the close button, end    
     key = cv2.waitKey(1)
-    if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
+    if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1) or END_OF_BUFFER:
         if len(avgTorsoDepth) > 0:
             avgTorsoDepth_filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
             with open(avgTorsoDepth_filename, 'w') as f:
