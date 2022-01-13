@@ -118,8 +118,61 @@ def calculateRotationMatrix(points, DEBUG_FLAG = False):
         print("Chosen rotation point: {}".format(minIdx))
         
     return rMatrices[minIdx], ((minIdx + 2) % 4), [PTError, PTAngle, PTAxis]
+
+def deprojectPixelToPoint(intrinsics, pixel, depth):
+    # Algorithm adapted from rs2_deproject_pixel_to_point in librealsense
+    # (https://github.com/IntelRealSense/librealsense/blob/e9f05c55f88f6876633bd59fd1cb3848da64b699/src/cuda/rscuda_utils.cuh)
+
+    point = [0, 0, 0]
+
+    x = (pixel[0] - intrinsics.ppx) / intrinsics.fx
+    y = (pixel[1] - intrinsics.ppy) / intrinsics.fy
+
+    if intrinsics.model == '"Inverse Brown Conrady"':
+        r2 = (x * x) + (y * y)
+        f = 1 + (intrinsics.coeffs[0] * r2) + (intrinsics.coeffs[1] * r2*r2) + (intrinsics.coeffs[4] * r2*r2*r2)
+        ux = (x * f) + (2 * intrinsics.coeffs[2] * x * y) + (intrinsics.coeffs[3] * (r2 + 2 * x*x))
+        uy = (y * f) + (2 * intrinsics.coeffs[3] * x * y) + (intrinsics.coeffs[2] * (r2 + 2 * y*y))
+        x = ux
+        y = uy
+
+    point[0] = depth * x
+    point[1] = depth * y
+    point[2] = depth
+
+    return point
+
+def projectPointToPixel(intrinsics, point):
+    # Algorithm adapted from rs2_project_point_to_pixel in librealsense
+    # (https://github.com/IntelRealSense/librealsense/blob/e9f05c55f88f6876633bd59fd1cb3848da64b699/src/cuda/rscuda_utils.cuh)
+
+    pixel = [0, 0]
+
+    x = point[0] / point[2]
+    y = point[1] / point[2]
+
+    if intrinsics.model == '"Modified Brown Conrady"':
+        r2 = x * x + y * y
+        f = 1 + intrinsics.coeffs[0] * r2 + intrinsics.coeffs[1] * r2*r2 + intrinsics.coeffs[4] * r2*r2*r2
+        x *= f
+        y *= f
+        dx = x + 2 * intrinsics.coeffs[2] * x*y + intrinsics.coeffs[3] * (r2 + 2 * x*x)
+        dy = y + 2 * intrinsics.coeffs[3] * x*y + intrinsics.coeffs[2] * (r2 + 2 * y*y)
+        x = dx
+        y = dy
+
+    elif intrinsics.model == '"F-Theta"':
+        r = math.sqrt(x*x + y * y)
+        rd = (1.0 / intrinsics.coeffs[0] * math.atan(2 * r* math.tan(intrinsics.coeffs[0] / 2.0)))
+        x *= rd / r
+        y *= rd / r
+
+    pixel[0] = x * intrinsics.fx + intrinsics.ppx
+    pixel[1] = y * intrinsics.fy + intrinsics.ppy
+
+    return pixel
         
-def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG = False):
+def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG = False, rs2_functions = True):
     '''
     Transforms depth frame perspective to face camera head-on.
 
@@ -157,7 +210,11 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     
     for pixel in perspectivePoints:
         depth = np_depth_frame[pixel[1],pixel[0]]
-        point = rs.rs2_deproject_pixel_to_point(intrinsics, pixel, depth)
+        if not rs2_functions:
+            point = deprojectPixelToPoint(intrinsics, pixel, depth)
+        else:
+            point = rs.rs2_deproject_pixel_to_point(intrinsics, pixel, depth)
+
         points.append(point)
     
     if rotationMatrix is None:
@@ -205,20 +262,25 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     #     np_depth_frame_prev_prev = np_depth_frame_prev.copy()
     # np_depth_frame_prev = np_depth_frame_cp
         
-    fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
+    if not rs2_functions:
+        fulcrumPoint = deprojectPixelToPoint(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
+    else:
+        fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
     fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
     fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
     
     verts = []
     for ix, iy in np.ndindex(np_depth_frame.shape):
         depth = np_depth_frame[ix, iy]
-        point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
+        if not rs2_functions:
+            point = deprojectPixelToPoint(intrinsics, [iy, ix], depth)
+        else:
+            point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
         verts.append(point)
     
     np_verts = np.asanyarray(verts)
     # pcPoints = pc.calculate(depth_frame)
     # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
-    
     np_verts_transformed = rotationMatrix.dot(np_verts.T).T
     np_verts_transformed = np_verts_transformed[~np.all(np_verts_transformed == 0, axis=1)]
     np_verts_transformed = np_verts_transformed
@@ -226,7 +288,10 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     # project back to 2D image with depth as data (WORKING BUT SLOW)   
     np_transformed_depth_frame = np.zeros([1080,1920])
     for vert in np_verts_transformed:
-        pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
+        if not rs2_functions:
+            pixel = projectPointToPixel(intrinsics, vert)
+        else:
+            pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
         if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
             np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
             

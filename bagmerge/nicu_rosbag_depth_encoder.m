@@ -1,3 +1,5 @@
+% Adapted from RGB version found at (https://github.com/GreenCUBIC/nicu_psm_research_files/blob/master/matlab_scripts/nicu_rosbag_converter.m)
+
 function [] = nicu_rosbag_depth_encoder(filepath, output_path, PATIENT_IDS, part_start, part_limit)
 %NICU_ROSBAG_CONVERTER Converts rosbag files to mp4
 %  filepath --> File path of data files per patient, for eg. Z:\
@@ -9,11 +11,11 @@ function [] = nicu_rosbag_depth_encoder(filepath, output_path, PATIENT_IDS, part
 
     batch_size = 10;
     tic
-    parfor i=1:length(PATIENT_IDS)
+    for i=1:length(PATIENT_IDS)
         unique_file_names = find_unique_file_names(filepath, PATIENT_IDS(i));
         try
             for file_num = 1:length(unique_file_names)
-                encode_video(filepath, PATIENT_IDS(i), unique_file_names(file_num), output_path, part_start, part_limit, batch_size, 30);
+                encode_video(filepath, PATIENT_IDS(i), unique_file_names(file_num), output_path, part_start, part_limit, batch_size, 15);
             end
         catch Error
             errorText = getReport(Error);
@@ -32,15 +34,18 @@ function [unique_file_names] = find_unique_file_names(filepath, patient_id)
 end
 
 function [] = encode_video(filepath, patient_id, main_file_name, output_path, part_start, part_end, batch_size, frame_rate)
-    video_writer = VideoWriter(char(strcat(output_path, main_file_name, "_depth",".mp4")),'MPEG-4');
+    video_writer = VideoWriter(char(strcat(output_path, main_file_name, "_depth",".mj2")),'Motion JPEG 2000');
     video_writer.FrameRate = frame_rate;
     open(video_writer);
+    disp(video_writer.VideoCompressionMethod)
     absolute_video_start_time = NaN;
+    intrinsics_saved = NaN;
     encoded_video_sec = 0;
     progress_msg = strcat("Encoding video for patient ", num2str(patient_id), " ... ");
     progress_bar = waitbar(0, progress_msg);
     batch_size = min(part_end - part_start, batch_size);
     [bag_selections, num_bag_selections, total_num_files] = read_rosbag_files(filepath, patient_id, main_file_name, part_start, batch_size);
+    
     while num_bag_selections > 0
      
         for bag_num=1:num_bag_selections
@@ -48,6 +53,33 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
             meta_topic = select(bag, 'Topic', ['/device_0/sensor_0/Depth_0/image/metadata']);  
             data_topic = select(bag, 'Topic', ['/device_0/sensor_0/Depth_0/image/data']);
             num_messages = meta_topic.NumMessages;
+            
+            if isnan(intrinsics_saved)
+                scaling_factor_topic = select(bag, 'Topic', ['/device_0/sensor_0/option/Depth Units/value']);
+                scaling_factor_struct = readMessages(scaling_factor_topic, 1, 'DataFormat', 'struct');
+                scaling_factor = extractfield(scaling_factor_struct{1}, 'Data');
+                camera_info_topic = select(bag, 'Topic', ['/device_0/sensor_0/Depth_0/info/camera_info']);
+                cameraInfo = readMessages(camera_info_topic, 1, 'DataFormat', 'struct');
+                tmp_nam = fieldnames(cameraInfo{1});
+                K = extractfield(cameraInfo{1}, 'K');
+                DistortionModel = extractfield(cameraInfo{1}, 'DistortionModel');
+                D = extractfield(cameraInfo{1}, 'D');
+                
+%                 disp(extractfield(cameraInfo{1}, 'Width'))
+%                 disp(extractfield(cameraInfo{1}, 'Height'))
+%                 disp(extractfield(cameraInfo{1}, 'K')) 
+%                 disp(extractfield(cameraInfo{1}, 'DistortionModel'))
+%                 disp(extractfield(cameraInfo{1}, 'D'))
+            
+                % Save intrinsics in txt file
+                intrinsics_saved = 1;
+                fileID = fopen(char(strcat(output_path, main_file_name, "_intrinsics", ".txt")),'w');
+                fprintf(fileID, 'scalingFactor=%.20f\n', scaling_factor);
+                fprintf(fileID, 'K=%.20f %.20f %.20f %.20f %.20f %.20f %.20f %.20f %.20f\n', K);
+                fprintf(fileID, 'distortionModel="%s"\n', char(DistortionModel));
+                fprintf(fileID, 'D=%.20f %.20f %.20f %.20f %.20f\n', D);
+                fclose(fileID);
+            end
             
             %1st message and every 10th meta message is system timestamp
             sys_time_messages = readMessages(meta_topic, 1:10:num_messages);
@@ -71,6 +103,10 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
             frame_indices = 1:length(absolute_time_stamp_sec);
             carried_messages = [];
             while encoded_video_sec <= max(absolute_time_stamp_sec)
+                if isfile(strcat('carried_messages', num2str(patient_id), '.mat'))
+                    load(strcat('carried_messages', num2str(patient_id), '.mat'), 'carried_messages');
+                    delete(strcat('carried_messages', num2str(patient_id), '.mat'));
+                end
                 frames_for_sec = frame_indices(absolute_time_stamp_sec == encoded_video_sec);
                 num_frames_in_sec = length(frames_for_sec);
                 
@@ -84,7 +120,8 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
                     carried_messages = [];
                 elseif encoded_video_sec == max(absolute_time_stamp_sec) && num_frames_in_sec < frame_rate
                     carried_messages = readMessages(data_topic, frames_for_sec);
-                    continue;
+                    save(strcat('carried_messages', num2str(patient_id), '.mat'), 'carried_messages');
+                    break;
                 else
                     down_sampled_indices = interp1(frames_for_sec, 1:num_frames_in_sec/frame_rate:num_frames_in_sec, 'nearest');
                     %Now read the actual frames from the data topic
@@ -117,6 +154,9 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
     end
     close(progress_bar);
     close(video_writer);
+    if isfile(strcat('carried_messages', num2str(patient_id), '.mat'))
+        delete(strcat('carried_messages', num2str(patient_id), '.mat'));
+    end
 end
 
 
@@ -126,7 +166,7 @@ function [rgbImage] = message_to_rgbimage(message)
     row = message.Height;
        
     img = readImage(message);
-    
+        
     % Initializing all channels
     redChannel = zeros(row,col,'uint8');
 
