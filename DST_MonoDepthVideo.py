@@ -27,6 +27,7 @@ import csv
 from tkinter import Frame, Tk
 from tkinter.filedialog import askopenfilename
 import libdst
+from multiprocessing import Process, Queue
 
 # Flags
 DSENABLE = "DEPTH_SELECT_ENABLE"
@@ -112,65 +113,74 @@ def playPause(arg):
     else:
         isPaused = False
 
-def play(videoFile, intrinsics):
-    rotationMatrix, fulcrumPixel_idx = None, None
-    # cap = cv2.VideoCapture(filename, cv2.CAP_FFMPEG)
-    cap = cv2.VideoCapture(videoFile)
-    # print(cap.getBackendName())
-    tmp = int(cap.get(cv2.CAP_PROP_FOURCC))
-    # print(chr(tmp&0xff) + chr((tmp>>8)&0xff) + chr((tmp>>16)&0xff) + chr((tmp>>24)&0xff))
-
-    def readFrame():
-        ret, img = cap.read()
+def LoadFrames(videoFile, preFrames):
+    videoCap = cv2.VideoCapture(videoFile)
+    ret = True
+    frameCounter = 0
+    while ret:
+        ret, img = videoCap.read()
         np_blueChannel = img[:, :, 0].astype('uint16')
         np_greenChannel = img[:, :, 1].astype('uint16')
         np_highBits = np_greenChannel << 8
         np_depth16 = np_highBits | np_blueChannel
-        return ret, np_depth16
+        preFrames[frameCounter] = 22
+        frameCounter += 1
     
-    ret, np_depth16 = readFrame()
+def play(videoFile, intrinsics):
+    rotationMatrix, fulcrumPixel_idx = None, None
 
-    while ret:
-        if not isPaused:
-            ret, np_depth16 = readFrame()
+    preFrames = dict([])
+    postFrames = dict([])
 
-        if ret:
-            np_depth_frame_orig = np_depth16.copy()
+    frameLoader = Process(target=LoadFrames, args=(videoFile, preFrames,))
+    frameLoader.start()
 
-            if len(perspectivePoints) == 4:
-                tic = time.perf_counter()
-                np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.perspectiveTransformHandler(intrinsics, np_depth_frame_orig.copy(), perspectivePoints, scaling_factor, None, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG, rs2_functions=False)
-                toc = time.perf_counter()
-                print(f"PT in {toc - tic:0.4f} seconds")
-                # Without Numba or Cupy (iteration-based method), around 2-2.3 secs
-                # Without Numba or Cupy (matrix operations), around 37 secs
-                # With Numba (iteration-based method), around 7-8 secs
-                # With Numba (matrix operations), around 9-11 secs
-                # With cupy (matrix operations), around 40 secs
+    while len(preFrames) == 0:
+        time.sleep(1)
 
-            else:
-                np_depth_frame = np_depth_frame_orig
+    frameCounter = 0
+    while len(preFrames) > 0:
+        print(len(preFrames))
 
-            slice1At, slice2At = updateSlicers(0)
-            np_depth_frame_scaled = np_depth_frame * scaling_factor
-            sliceEnd = slice1At + slice2At
-            np_depth_frame_bool1 = (np_depth_frame_scaled < sliceEnd) * 1
-            np_depth_frame_bool2 = (np_depth_frame_scaled > slice2At) * 1
-            np_depth_frame_bool = np.bitwise_and(np_depth_frame_bool1, np_depth_frame_bool2)
-            
-            np_depth_frame_sliced = np_depth_frame_scaled * np_depth_frame_bool
+        # np_depth_frame_orig = np_depth16.copy()
 
-            output_image = libdst.displayDepthPoints(np_depth_frame_scaled, np_depth_frame_sliced, depthPoints, DEBUG_FLAG)
-            
-            # output_image = np_depth_frame_sliced
-            # print(np_depth_frame_sliced.max())
-            cv2.imshow(windowName, output_image)
+        # if len(perspectivePoints) == 4:
+        #     tic = time.perf_counter()
+        #     np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.perspectiveTransformHandler(intrinsics, np_depth_frame_orig.copy(), perspectivePoints, scaling_factor, None, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG, rs2_functions=False)
+        #     toc = time.perf_counter()
+        #     print(f"PT in {toc - tic:0.4f} seconds")
+        #     # Without Numba or Cupy (iteration-based method), around 2-2.3 secs
+        #     # Without Numba or Cupy (matrix operations), around 37 secs
+        #     # With Numba (iteration-based method), around 7-8 secs
+        #     # With Numba (matrix operations), around 9-11 secs
+        #     # With cupy (matrix operations), around 40 secs
 
-            # Exit conditions
-            key = cv2.waitKey(1)
-            if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
-                cv2.destroyAllWindows()
-                break
+        # else:
+        #     np_depth_frame = np_depth_frame_orig
+
+        # slice1At, slice2At = updateSlicers(0)
+        # np_depth_frame_scaled = np_depth_frame * scaling_factor
+        # sliceEnd = slice1At + slice2At
+        # np_depth_frame_bool1 = (np_depth_frame_scaled < sliceEnd) * 1
+        # np_depth_frame_bool2 = (np_depth_frame_scaled > slice2At) * 1
+        # np_depth_frame_bool = np.bitwise_and(np_depth_frame_bool1, np_depth_frame_bool2)
+        
+        # np_depth_frame_sliced = np_depth_frame_scaled * np_depth_frame_bool
+
+        # output_image = libdst.displayDepthPoints(np_depth_frame_scaled, np_depth_frame_sliced, depthPoints, DEBUG_FLAG)
+        
+        # # output_image = np_depth_frame_sliced
+        # # print(np_depth_frame_sliced.max())
+        # cv2.imshow(windowName, output_image)
+
+        # # Exit conditions
+        # key = cv2.waitKey(1)
+        # if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
+        #     cv2.destroyAllWindows()
+        #     break
+
+        # if not isPaused and frameCounter <= (preFrames.qsize() - 1):
+        #     frameCounter += 1
 
 def main():
     global scaling_factor, k, distortionModel, d
