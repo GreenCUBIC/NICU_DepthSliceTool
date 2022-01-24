@@ -2,6 +2,8 @@ import pyrealsense2 as rs
 import numpy as np
 import cv2
 import math
+from numba import jit
+import cupy as cp
 
 def displayDepthPoints(depth_frame_scaled, output, depthPoints, DEBUG_FLAG = False):
     '''
@@ -119,20 +121,110 @@ def calculateRotationMatrix(points, DEBUG_FLAG = False):
         
     return rMatrices[minIdx], ((minIdx + 2) % 4), [PTError, PTAngle, PTAxis]
 
-def deprojectPixelToPoint(intrinsics, pixel, depth):
+@jit
+def deprojectAll(np_frame, ppxy, fxy, coeffs, model):
+    # Algorithm adapted from rs2_deproject_pixel_to_point in librealsense
+    # (https://github.com/IntelRealSense/librealsense/blob/e9f05c55f88f6876633bd59fd1cb3848da64b699/src/cuda/rscuda_utils.cuh)
+    # Slower than just a for loop going through each of the pixels for some reason?
+
+    np_points = np.zeros((1, 3), dtype='int16')
+    for ix, iy in np.ndindex(np_frame.shape):
+        np_appended = np.array([[iy, ix, np_frame[ix, iy]]], dtype='int16')
+        np_points = np.vstack([np_points, np_appended])
+
+    np_points = np.delete(np_points, (0), axis=0)
+
+    x = (np_points[:, 0] - ppxy[0]) / fxy[0]
+    y = (np_points[:, 1] - ppxy[1]) / fxy[1]
+
+    if model == '"Inverse Brown Conrady"':
+        r2 = (x * x) + (y * y)
+        f = 1 + (coeffs[0] * r2) + (coeffs[1] * r2*r2) + (coeffs[4] * r2*r2*r2)
+        ux = (x * f) + (2 * coeffs[2] * x * y) + (coeffs[3] * (r2 + 2 * x*x))
+        uy = (y * f) + (2 * coeffs[3] * x * y) + (coeffs[2] * (r2 + 2 * y*y))
+        x = ux
+        y = uy
+
+    points = np.zeros(np_points.shape)
+    points[:, 0] = np_points[:, 2] * x
+    points[:, 1] = np_points[:, 2] * y
+    points[:, 2] = np_points[:, 2]
+
+    np_points = cp.asnumpy(points)
+
+    return np_points
+
+def cp_deprojectPixelToPoint(np_frame, ppxy, fxy, coeffs, model):
+    # Algorithm adapted from rs2_deproject_pixel_to_point in librealsense
+    # (https://github.com/IntelRealSense/librealsense/blob/e9f05c55f88f6876633bd59fd1cb3848da64b699/src/cuda/rscuda_utils.cuh)
+    # This seems to be slower even when using gpu for matrix operations (maybe because of overhead moving the data to gpu?)
+
+    mempool = cp.get_default_memory_pool()
+    mempool.set_limit(size=1024**3)
+    # print(mempool.get_limit())
+    pinned_mempool = cp.get_default_pinned_memory_pool()
+
+    cp_frame = cp.array(np_frame)
+    ppxy = cp.array(ppxy)
+    fxy = cp.array(fxy)
+    coeffs = cp.array(coeffs)
+    cp_points = cp.array([0, 0, 0], dtype='int16')
+    # print(mempool.used_bytes())
+    # print(mempool.total_bytes())
+    for ix, iy in cp.ndindex(cp_frame.shape):
+        cp_appended = cp.array([iy, ix, cp_frame[ix, iy].get()], dtype='int16')
+        cp_points = cp.vstack([cp_points, cp_appended])
+        # print("{}, {}, {}".format(ix, iy, cp_frame[ix, iy]))
+        
+        if mempool.total_bytes() > 1000**3:
+            mempool.free_all_blocks()
+
+    # print("Used bytes: {}; Total bytes: {}; Free bytes: {}".format(mempool.used_bytes(), mempool.total_bytes(), mempool.free_bytes()))
+    # print("Free blocks: {}".format(mempool.n_free_blocks()))
+    # cp_points = cp.delete(cp_points, (0), axis=0)
+
+    x = (cp_points[:, 0] - ppxy[0]) / fxy[0]
+    y = (cp_points[:, 1] - ppxy[1]) / fxy[1]
+    print("Shapes of x and y: {}, {}".format(x.shape, y.shape))
+
+    if model == '"Inverse Brown Conrady"':
+        r2 = (x * x) + (y * y)
+        f = 1 + (coeffs[0] * r2) + (coeffs[1] * r2*r2) + (coeffs[4] * r2*r2*r2)
+        ux = (x * f) + (2 * coeffs[2] * x * y) + (coeffs[3] * (r2 + 2 * x*x))
+        uy = (y * f) + (2 * coeffs[3] * x * y) + (coeffs[2] * (r2 + 2 * y*y))
+        x = ux
+        y = uy
+
+    # print(cp_points.shape)
+    # print(cp_points[:, 2].shape)
+    points = cp.zeros(cp_points.shape)
+    # print(points.shape)
+    points[:, 0] = cp_points[:, 2] * x
+    points[:, 1] = cp_points[:, 2] * y
+    points[:, 2] = cp_points[:, 2]
+
+    np_points = cp.asnumpy(points)
+
+    del points, cp_points
+    mempool.free_all_blocks()
+    pinned_mempool.free_all_blocks()
+
+    return np_points
+
+def deprojectPixelToPoint(pixel, depth, ppxy, fxy, coeffs, model):
     # Algorithm adapted from rs2_deproject_pixel_to_point in librealsense
     # (https://github.com/IntelRealSense/librealsense/blob/e9f05c55f88f6876633bd59fd1cb3848da64b699/src/cuda/rscuda_utils.cuh)
 
     point = [0, 0, 0]
 
-    x = (pixel[0] - intrinsics.ppx) / intrinsics.fx
-    y = (pixel[1] - intrinsics.ppy) / intrinsics.fy
+    x = (pixel[0] - ppxy[0]) / fxy[0]
+    y = (pixel[1] - ppxy[1]) / fxy[1]
 
-    if intrinsics.model == '"Inverse Brown Conrady"':
+    if model == '"Inverse Brown Conrady"':
         r2 = (x * x) + (y * y)
-        f = 1 + (intrinsics.coeffs[0] * r2) + (intrinsics.coeffs[1] * r2*r2) + (intrinsics.coeffs[4] * r2*r2*r2)
-        ux = (x * f) + (2 * intrinsics.coeffs[2] * x * y) + (intrinsics.coeffs[3] * (r2 + 2 * x*x))
-        uy = (y * f) + (2 * intrinsics.coeffs[3] * x * y) + (intrinsics.coeffs[2] * (r2 + 2 * y*y))
+        f = 1 + (coeffs[0] * r2) + (coeffs[1] * r2*r2) + (coeffs[4] * r2*r2*r2)
+        ux = (x * f) + (2 * coeffs[2] * x * y) + (coeffs[3] * (r2 + 2 * x*x))
+        uy = (y * f) + (2 * coeffs[3] * x * y) + (coeffs[2] * (r2 + 2 * y*y))
         x = ux
         y = uy
 
@@ -142,7 +234,7 @@ def deprojectPixelToPoint(intrinsics, pixel, depth):
 
     return point
 
-def projectPointToPixel(intrinsics, point):
+def projectPointToPixel(point, ppxy, fxy, coeffs, model):
     # Algorithm adapted from rs2_project_point_to_pixel in librealsense
     # (https://github.com/IntelRealSense/librealsense/blob/e9f05c55f88f6876633bd59fd1cb3848da64b699/src/cuda/rscuda_utils.cuh)
 
@@ -151,24 +243,24 @@ def projectPointToPixel(intrinsics, point):
     x = point[0] / point[2]
     y = point[1] / point[2]
 
-    if intrinsics.model == '"Modified Brown Conrady"':
+    if model == '"Modified Brown Conrady"':
         r2 = x * x + y * y
-        f = 1 + intrinsics.coeffs[0] * r2 + intrinsics.coeffs[1] * r2*r2 + intrinsics.coeffs[4] * r2*r2*r2
+        f = 1 + coeffs[0] * r2 + coeffs[1] * r2*r2 + coeffs[4] * r2*r2*r2
         x *= f
         y *= f
-        dx = x + 2 * intrinsics.coeffs[2] * x*y + intrinsics.coeffs[3] * (r2 + 2 * x*x)
-        dy = y + 2 * intrinsics.coeffs[3] * x*y + intrinsics.coeffs[2] * (r2 + 2 * y*y)
+        dx = x + 2 * coeffs[2] * x*y + coeffs[3] * (r2 + 2 * x*x)
+        dy = y + 2 * coeffs[3] * x*y + coeffs[2] * (r2 + 2 * y*y)
         x = dx
         y = dy
 
-    elif intrinsics.model == '"F-Theta"':
+    elif model == '"F-Theta"':
         r = math.sqrt(x*x + y * y)
-        rd = (1.0 / intrinsics.coeffs[0] * math.atan(2 * r* math.tan(intrinsics.coeffs[0] / 2.0)))
+        rd = (1.0 / coeffs[0] * math.atan(2 * r* math.tan(coeffs[0] / 2.0)))
         x *= rd / r
         y *= rd / r
 
-    pixel[0] = x * intrinsics.fx + intrinsics.ppx
-    pixel[1] = y * intrinsics.fy + intrinsics.ppy
+    pixel[0] = x * fxy[0] + ppxy[0]
+    pixel[1] = y * fxy[1] + ppxy[1]
 
     return pixel
         
@@ -211,7 +303,7 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     for pixel in perspectivePoints:
         depth = np_depth_frame[pixel[1],pixel[0]]
         if not rs2_functions:
-            point = deprojectPixelToPoint(intrinsics, pixel, depth)
+            point = deprojectPixelToPoint(pixel, depth, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
         else:
             point = rs.rs2_deproject_pixel_to_point(intrinsics, pixel, depth)
 
@@ -263,22 +355,42 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     # np_depth_frame_prev = np_depth_frame_cp
         
     if not rs2_functions:
-        fulcrumPoint = deprojectPixelToPoint(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
+        fulcrumPoint = deprojectPixelToPoint(pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]], (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
     else:
         fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
     fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
     fulcrumPixelDepth = fulcrumPointRotated[2] * scaling_factor
     
+    # TESTING
+    # Trying deprojection of whole frame at once
+    # Seems to slow it down even more somehow (even when using GPU)
+    
+    # verts = []
+    # if not rs2_functions:
+    #     # verts = cp_deprojectPixelToPoint(np_depth_frame, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
+    #     verts = deprojectAll(np_depth_frame, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
+    # else:
+    #     for ix, iy in np.ndindex(np_depth_frame.shape):
+    #         depth = np_depth_frame[ix, iy]
+            
+    #         point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
+    #         verts.append(point)
+
     verts = []
-    for ix, iy in np.ndindex(np_depth_frame.shape):
-        depth = np_depth_frame[ix, iy]
-        if not rs2_functions:
-            point = deprojectPixelToPoint(intrinsics, [iy, ix], depth)
-        else:
+    if rs2_functions:
+        for ix, iy in np.ndindex(np_depth_frame.shape):
+            depth = np_depth_frame[ix, iy]
             point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
-        verts.append(point)
+            verts.append(point)
+    else:
+        for ix, iy in np.ndindex(np_depth_frame.shape):
+            depth = np_depth_frame[ix, iy]
+            point = deprojectPixelToPoint([iy, ix], depth, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
+            verts.append(point)
     
     np_verts = np.asanyarray(verts)
+    print(np_verts.shape)
+    print(np_depth_frame.shape)
     # pcPoints = pc.calculate(depth_frame)
     # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
     np_verts_transformed = rotationMatrix.dot(np_verts.T).T
@@ -289,9 +401,10 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     np_transformed_depth_frame = np.zeros([1080,1920])
     for vert in np_verts_transformed:
         if not rs2_functions:
-            pixel = projectPointToPixel(intrinsics, vert)
+            pixel = projectPointToPixel(vert, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
         else:
             pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
+
         if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
             np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
             

@@ -138,7 +138,16 @@ def play(videoFile, intrinsics):
             np_depth_frame_orig = np_depth16.copy()
 
             if len(perspectivePoints) == 4:
+                tic = time.perf_counter()
                 np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.perspectiveTransformHandler(intrinsics, np_depth_frame_orig.copy(), perspectivePoints, scaling_factor, None, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG, rs2_functions=False)
+                toc = time.perf_counter()
+                print(f"PT in {toc - tic:0.4f} seconds")
+                # Without Numba or Cupy (iteration-based method), around 2-2.3 secs
+                # Without Numba or Cupy (matrix operations), around 37 secs
+                # With Numba (iteration-based method), around 7-8 secs
+                # With Numba (matrix operations), around 9-11 secs
+                # With cupy (matrix operations), around 40 secs
+
             else:
                 np_depth_frame = np_depth_frame_orig
 
@@ -200,7 +209,6 @@ def main():
 
     # Store intrinsics in the form: [Distortion Model, (ppx, ppy), (fx, fy), coeffs]
     intrinsics = intrinsics_noRS2(distortionModel, (k[2], k[5]), (k[0], k[4]), d)
-    print(intrinsics.model)
 
     # Create opencv window with trackbars, tool buttons, and set the mouse action handler
     cv2.namedWindow(windowName, cv2.WINDOW_AUTOSIZE)
