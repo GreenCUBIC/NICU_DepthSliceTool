@@ -2,6 +2,8 @@
 """
 Created on Thu Jun 24 23:20:03 2021
 
+python3 realsense_rosbag_merge.py p26/p26Merged.bag p26/p26.bag p26/p26_1.bag p26/p26_2.bag p26/p26_3.bag p26/p26_4.bag p26/p26_5.bag p26/p26_6.bag p26/p26_7.bag p26/p26_8.bag p26/p26_9.bag p26/p26_10.bag p26/p26_11.bag p26/p26_12.bag p26/p26_13.bag p26/p26_14.bag p26/p26_15.bag p26/p26_16.bag p26/p26_17.bag p26/p26_18.bag p26/p26_19.bag p26/p26_20.bag
+
 @author: Zein Hajj-Ali - zeinhajjali@sce.carleton.ca
 """
 
