@@ -311,8 +311,10 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
         depth = np_depth_frame[pixel[1],pixel[0]]
         if not rs2_functions:
             point = deprojectPixelToPoint((pixel[0], pixel[1], depth), ppxy=(intrinsics.ppx, intrinsics.ppy), fxy=(intrinsics.fx, intrinsics.fy), coeffs=intrinsics.coeffs, model=intrinsics.model)
+            # print(point)
         else:
             point = rs.rs2_deproject_pixel_to_point(intrinsics, pixel, depth)
+            # print(point)
 
         points.append(point)
     
@@ -417,8 +419,8 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
 
     
     np_verts = np.asanyarray(verts)
-    print(np_verts.shape)
-    print(np_depth_frame.shape)
+    # print(np_verts.shape)
+    # print(np_depth_frame.shape)
     # pcPoints = pc.calculate(depth_frame)
     # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
     np_verts_transformed = rotationMatrix.dot(np_verts.T).T

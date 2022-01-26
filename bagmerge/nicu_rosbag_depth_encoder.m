@@ -34,10 +34,10 @@ function [unique_file_names] = find_unique_file_names(filepath, patient_id)
 end
 
 function [] = encode_video(filepath, patient_id, main_file_name, output_path, part_start, part_end, batch_size, frame_rate)
-    video_writer = VideoWriter(char(strcat(output_path, main_file_name, "_depth",".mj2")),'Motion JPEG 2000');
+    video_writer = VideoWriter(char(strcat(output_path, main_file_name, "_depth",".mj2")),'Archival');
     video_writer.FrameRate = frame_rate;
     open(video_writer);
-    disp(video_writer.VideoCompressionMethod)
+    disp(video_writer.LosslessCompression)
     absolute_video_start_time = NaN;
     intrinsics_saved = NaN;
     encoded_video_sec = 0;
