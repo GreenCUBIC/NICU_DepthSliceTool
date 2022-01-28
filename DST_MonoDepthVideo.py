@@ -52,6 +52,8 @@ scaling_factor = 0
 k = []
 distortionModel = ""
 d = []
+init_timestamp = None
+init_epochTime = None
 savedFrame = None
 isPaused = True
 depthSelectEnabled = False
@@ -133,6 +135,14 @@ def play(videoFile, intrinsics):
     # totalSecs = totalFrames / framerate
     # cv2.createTrackbar(sliderSeek, windowName, 0, int(totalSecs), lambda seekFunc: onSeek(seekFunc, framerate, videoCap=cap))
     # print("Frames: {}; Framerate: {}; Seconds: {}".format(totalFrames, framerate, totalSecs))
+    frameCounter = 0
+
+    # TESTING
+    # ONLY USE WHEN GETTING DATA ON SPECIFIC FRAMES
+    STARTING_FRAME = 13500
+    cap.set(cv2.CAP_PROP_POS_FRAMES, STARTING_FRAME)
+    frameCounter = STARTING_FRAME
+
 
 
     def readFrame():
@@ -145,8 +155,6 @@ def play(videoFile, intrinsics):
     
     ret, np_depth16 = readFrame()
     prevTime = 0
-    frameCounter = 0
-
     while ret:
         
         timeElapsed = time.time() - prevTime
@@ -243,7 +251,9 @@ def play(videoFile, intrinsics):
                     #     avgTorsoDepth.append([timestamps[frameCounter], np_ma_torsoROI.mean()])
 
                     if not isPaused:
-                        avgTorsoDepth.append([frameCounter/framerate, np_ma_torsoROI.mean()])
+                        epoch_frameTime = init_epochTime + (frameCounter/framerate)
+                        string_frameTime = datetime.datetime.fromtimestamp(epoch_frameTime).strftime('%Y-%m-%d %H:%M:%S.%f')
+                        avgTorsoDepth.append([string_frameTime, np_ma_torsoROI.mean()])
                 
                 # Anthropomorphic checks
                 # TURNED OFF TO SAVE TIME AND RECORD AVERAGE TORSO DEPTH
@@ -335,7 +345,7 @@ def play(videoFile, intrinsics):
             # Exit conditions
             key = cv2.waitKey(1)
             if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
-                if len(avgTorsoDepth) > 0:
+                if len(avgTorsoDepth) > 1:
                     avgTorsoDepth_filename = os.path.splitext(videoFile)[0] + "_TorsoROIDepth.csv"
                     with open(avgTorsoDepth_filename, 'w') as f:
                         csvWriter = csv.writer(f)
@@ -352,7 +362,7 @@ def play(videoFile, intrinsics):
                 break
 
 def main():
-    global scaling_factor, k, distortionModel, d
+    global scaling_factor, k, distortionModel, d, init_timestamp, init_epochTime
 
     root = Tk()
     root.withdraw()
@@ -361,22 +371,22 @@ def main():
     root.deiconify()
     root.lift()
     root.focus_force()
-    videoFile = askopenfilename(filetypes=[("Depth video encoded as RGB files", ".mj2")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
+    # If you want to pick from the NAS, add the positonal argument (initialdir=r"\\134.117.64.31\\Main Storage")
+    videoFile = askopenfilename(filetypes=[("Depth video encoded as RGB files", ".mj2")], parent=root)
+    intrinsicsFile = askopenfilename(filetypes=[("Camera intrinsics information in text file", ".txt")], parent=root)
+    timestampFile = askopenfilename(filetypes=[("Video starting timestamp in text file", ".txt")], parent=root)
     root.destroy()
     if not videoFile:
         sys.exit("No video file selected")
-
-    root = Tk()
-    root.withdraw()
-    root.overrideredirect(True)
-    root.geometry('0x0+0+0')
-    root.deiconify()
-    root.lift()
-    root.focus_force()
-    intrinsicsFile = askopenfilename(filetypes=[("Camera intrinsics information in text file", ".txt")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
-    root.destroy()
-    if not intrinsicsFile:
+    elif not intrinsicsFile:
         sys.exit("No intrinsics file selected")
+    
+    if timestampFile:
+        timestampFile = open(timestampFile, 'r')
+        print('Reading timestamp')
+        timeString = timestampFile.readline().split('=')[1].rstrip()
+        init_timestamp = datetime.datetime.strptime(timeString, '%Y-%m-%d %H:%M:%S.%f')
+        init_epochTime = datetime.datetime.timestamp(init_timestamp)
 
     # Store intrinsics in vars
     intrinsicsFile = open(intrinsicsFile, 'r')
