@@ -5,9 +5,9 @@
 
 <!-- Add buttons here -->
 
-![GitHub issues](https://img.shields.io/github/issues/zeinhajjali/DepthSliceTool)
 ![GitHub last commit](https://img.shields.io/github/last-commit/zeinhajjali/DepthSliceTool)
-![GitHub issues](https://img.shields.io/github/issues-raw/zeinhajjali/DepthSliceTool)
+![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/zeinhajjali/DepthSliceTool?include_prereleases)
+![GitHub issues](https://img.shields.io/github/issues/zeinhajjali/DepthSliceTool)
 
 <!-- Describe your project in brief -->
 
