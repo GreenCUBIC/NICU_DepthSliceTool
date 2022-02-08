@@ -7,7 +7,7 @@ function [] = all_nicu_rosbag_depth_encoder()
                 37, 570; 38, 496];
     tic
     parfor i=1:length(patients)
-        nicu_rosbag_depth_encoder("Z:\", strcat("D:\DepthVideosEncoded\", "p", num2str(patients(i,1)), "\"), [patients(i, 1)], 0, patients(i, 2))
+        nicu_rosbag_depth_encoder("Z:\", strcat("D:\LosslessDepth\", "p", num2str(patients(i,1)), "\"), [patients(i, 1)], 0, patients(i, 2))
     end
     toc
 

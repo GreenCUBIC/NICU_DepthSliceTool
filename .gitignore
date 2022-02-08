@@ -128,5 +128,13 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Bag files (Data)
-.bag
+# Data
+*.bag
+*.jpeg
+*.jpg
+*.csv
+*.mp4
+*.txt
+*.mj2
+*.avi
+*.ini

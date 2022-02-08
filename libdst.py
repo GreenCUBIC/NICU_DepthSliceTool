@@ -4,6 +4,9 @@ import cv2
 import math
 from numba import jit
 import cupy as cp
+import time
+from multiprocessing import Pool
+from functools import partial
 
 def displayDepthPoints(depth_frame_scaled, output, depthPoints, DEBUG_FLAG = False):
     '''
@@ -211,14 +214,14 @@ def cp_deprojectPixelToPoint(np_frame, ppxy, fxy, coeffs, model):
 
     return np_points
 
-def deprojectPixelToPoint(pixel, depth, ppxy, fxy, coeffs, model):
+def deprojectPixelToPoint(pixel3, ppxy, fxy, coeffs, model):
     # Algorithm adapted from rs2_deproject_pixel_to_point in librealsense
     # (https://github.com/IntelRealSense/librealsense/blob/e9f05c55f88f6876633bd59fd1cb3848da64b699/src/cuda/rscuda_utils.cuh)
 
     point = [0, 0, 0]
 
-    x = (pixel[0] - ppxy[0]) / fxy[0]
-    y = (pixel[1] - ppxy[1]) / fxy[1]
+    x = (pixel3[0] - ppxy[0]) / fxy[0]
+    y = (pixel3[1] - ppxy[1]) / fxy[1]
 
     if model == '"Inverse Brown Conrady"':
         r2 = (x * x) + (y * y)
@@ -228,9 +231,9 @@ def deprojectPixelToPoint(pixel, depth, ppxy, fxy, coeffs, model):
         x = ux
         y = uy
 
-    point[0] = depth * x
-    point[1] = depth * y
-    point[2] = depth
+    point[0] = pixel3[2] * x
+    point[1] = pixel3[2] * y
+    point[2] = pixel3[2]
 
     return point
 
@@ -299,13 +302,19 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     # camera_rotation_matrix = np.identity(3)
     # camera_translation_matrix = np.array([0.0, 0.0, 0.0])
     # distortion_coeffs = np.asanyarray(intrinsics.coeffs)
+    # p = Pool()
+
+    # Using partial function adds around 0.5 secs slowdown
+    # deprojectHelper = partial(deprojectPixelToPoint, ppxy=(intrinsics.ppx, intrinsics.ppy), fxy=(intrinsics.fx, intrinsics.fy), coeffs=intrinsics.coeffs, model=intrinsics.model)
     
     for pixel in perspectivePoints:
         depth = np_depth_frame[pixel[1],pixel[0]]
         if not rs2_functions:
-            point = deprojectPixelToPoint(pixel, depth, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
+            point = deprojectPixelToPoint((pixel[0], pixel[1], depth), ppxy=(intrinsics.ppx, intrinsics.ppy), fxy=(intrinsics.fx, intrinsics.fy), coeffs=intrinsics.coeffs, model=intrinsics.model)
+            # print(point)
         else:
             point = rs.rs2_deproject_pixel_to_point(intrinsics, pixel, depth)
+            # print(point)
 
         points.append(point)
     
@@ -355,7 +364,7 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     # np_depth_frame_prev = np_depth_frame_cp
         
     if not rs2_functions:
-        fulcrumPoint = deprojectPixelToPoint(pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]], (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
+        fulcrumPoint = deprojectPixelToPoint((pPoints[fulcrumPixel_idx][0], pPoints[fulcrumPixel_idx][1], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]]), ppxy=(intrinsics.ppx, intrinsics.ppy), fxy=(intrinsics.fx, intrinsics.fy), coeffs=intrinsics.coeffs, model=intrinsics.model)
     else:
         fulcrumPoint = rs.rs2_deproject_pixel_to_point(intrinsics, pPoints[fulcrumPixel_idx], np_depth_frame[pPoints[fulcrumPixel_idx][1], pPoints[fulcrumPixel_idx][0]])
     fulcrumPointRotated = rotationMatrix.dot(np.asanyarray(fulcrumPoint).T).T
@@ -383,14 +392,35 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
             point = rs.rs2_deproject_pixel_to_point(intrinsics, [iy, ix], depth)
             verts.append(point)
     else:
+        # Without Pools: around 1.25 secs
+        # With Pools: around 3.6 secs
+        # Using 'map' without Pools: around 1.7 secs
+        tic = time.perf_counter()
         for ix, iy in np.ndindex(np_depth_frame.shape):
             depth = np_depth_frame[ix, iy]
-            point = deprojectPixelToPoint([iy, ix], depth, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
+            point = deprojectPixelToPoint((iy, ix, depth), ppxy=(intrinsics.ppx, intrinsics.ppy), fxy=(intrinsics.fx, intrinsics.fy), coeffs=intrinsics.coeffs, model=intrinsics.model)
             verts.append(point)
+        toc = time.perf_counter()
+        # print(f"Deproject in {toc - tic:0.4f} seconds")
+
+        # tic = time.perf_counter()
+
+        # pixels_iter = []
+        # for ix, iy in np.ndindex(np_depth_frame.shape):
+        #     depth = np_depth_frame[ix, iy]
+        #     pixels_iter.append((iy, ix, depth))
+
+        # verts = p.map(deprojectHelper, pixels_iter)
+        # # p.close()
+        # # p.join()
+        # toc = time.perf_counter()
+        # print(f"Deproject in {toc - tic:0.4f} seconds")
+
+
     
     np_verts = np.asanyarray(verts)
-    print(np_verts.shape)
-    print(np_depth_frame.shape)
+    # print(np_verts.shape)
+    # print(np_depth_frame.shape)
     # pcPoints = pc.calculate(depth_frame)
     # np_verts = np.asanyarray(pcPoints.get_vertices(dims=2))
     np_verts_transformed = rotationMatrix.dot(np_verts.T).T
@@ -399,14 +429,20 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     
     # project back to 2D image with depth as data (WORKING BUT SLOW)   
     np_transformed_depth_frame = np.zeros([1080,1920])
-    for vert in np_verts_transformed:
-        if not rs2_functions:
+    if not rs2_functions:
+        tic = time.perf_counter()
+        for vert in np_verts_transformed:
             pixel = projectPointToPixel(vert, (intrinsics.ppx, intrinsics.ppy), (intrinsics.fx, intrinsics.fy), intrinsics.coeffs, intrinsics.model)
-        else:
+            if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
+                np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
+        toc = time.perf_counter()
+        # print(f"Project in {toc - tic:0.4f} seconds")
+        # Without Pools: around 0.73 secs
+    else:
+        for vert in np_verts_transformed:
             pixel = rs.rs2_project_point_to_pixel(intrinsics, vert)
-
-        if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
-            np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
+            if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
+                np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
             
     # Remove rows and columns of all zeros
     np_transformed_depth_frame = np_transformed_depth_frame[~np.all(np_transformed_depth_frame == 0, axis=1)]
@@ -468,7 +504,7 @@ def crossSections(np_depth_frame, fulcrumPixelDepth, scaling_factor, DEBUG_FLAG 
     
     sliceDepth = minDepth
     cross_section_frames = []
-    for i in range(19):
+    for i in range(20):
         np_depth_frame_mask = (np_depth_frame <= sliceDepth) * 1.0
         cross_section_frames.append(np_depth_frame_mask)        
         sliceDepth = sliceDepth + sliceInc
@@ -549,15 +585,18 @@ def crossSections(np_depth_frame, fulcrumPixelDepth, scaling_factor, DEBUG_FLAG 
     
     headSphere = None
     maxHeadSlice = None
+    # print("There are {} headSpheres".format(len(headSpheres)))
     if len(headSpheres) > 0:
         headSphereCircularityErrs = []
         for sphere in headSpheres:
             perimeter = cv2.arcLength(sphere[-1], True)
             area = cv2.contourArea(sphere[-1])
             circularity = 4*math.pi*(area/(perimeter*perimeter))
+            # print("circ: {}".format(circularity))
             headSphereCircularityErrs.append(abs(1-circularity))
         
         chosenHeadSphere_idx = headSphereCircularityErrs.index(min(headSphereCircularityErrs))
+        # print("chose {}".format(chosenHeadSphere_idx))
         headSphere = headSpheres[chosenHeadSphere_idx]
         maxHeadSlice = maxSlice_headSpheres[chosenHeadSphere_idx]
     
