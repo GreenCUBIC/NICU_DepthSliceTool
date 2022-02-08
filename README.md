@@ -15,8 +15,8 @@ A tool for automatically segmenting videos based on depth data. Used for region-
 
 Features include:
 
-- Head and Torso Region-of-Interest Segmentation
-- Perspective Transformation of Recorded Depth Video
+- Head and torso region-of-interest segmentation
+- Perspective transformation of recorded depth video
 - Compatibility with rosbag (.bag) files recorded by Intel RealSense RGB-D cameras
 - Combining and encoding rosbag files to mj2 archival video files.
 
