@@ -39,7 +39,7 @@ root.geometry('0x0+0+0')
 root.deiconify()
 root.lift()
 root.focus_force()
-filename = askopenfilename(filetypes=[("Bag files", ".bag")], parent=root)
+filename = askopenfilename(filetypes=[("Bag files", ".bag")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
 root.destroy()
 if not filename:
     sys.exit("No file selected")
@@ -48,7 +48,7 @@ if not filename:
 align = rs.align(rs.stream.depth)
 colorizer = rs.colorizer()
 pc = rs.pointcloud()
-hole_filling = rs.hole_filling_filter()
+# hole_filling = rs.hole_filling_filter()
 
 config = rs.config()
 rs.config.enable_device_from_file(config, filename)
@@ -176,13 +176,13 @@ def bufferVideo(nFrames):
         
     return depth_frames, color_frames, timestamps, depth_frame.get_units(), epochtime
 
-depth_frames, color_frames, timestamps, scaling_factor, epochtime = bufferVideo(18500)
+depth_frames, color_frames, timestamps, scaling_factor, epochtime = bufferVideo(90)
     
 savedTimestamp = None
 # Streaming loop
 frameCounter = 0
 while frameCounter < len(depth_frames):
-    print(frameCounter)
+    # print(frameCounter)
     np_depth_frame = depth_frames[frameCounter]
     np_color_frame = color_frames[frameCounter]
     

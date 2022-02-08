@@ -401,7 +401,7 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
             point = deprojectPixelToPoint((iy, ix, depth), ppxy=(intrinsics.ppx, intrinsics.ppy), fxy=(intrinsics.fx, intrinsics.fy), coeffs=intrinsics.coeffs, model=intrinsics.model)
             verts.append(point)
         toc = time.perf_counter()
-        print(f"Deproject in {toc - tic:0.4f} seconds")
+        # print(f"Deproject in {toc - tic:0.4f} seconds")
 
         # tic = time.perf_counter()
 
@@ -436,7 +436,7 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
             if (pixel[0] < 960 and pixel[1] < 540 and pixel[0] >= -960 and pixel[1] >= -540):
                 np_transformed_depth_frame[int(pixel[1] + 540),int(pixel[0]) + 960] = vert[2]
         toc = time.perf_counter()
-        print(f"Project in {toc - tic:0.4f} seconds")
+        # print(f"Project in {toc - tic:0.4f} seconds")
         # Without Pools: around 0.73 secs
     else:
         for vert in np_verts_transformed:
@@ -504,7 +504,7 @@ def crossSections(np_depth_frame, fulcrumPixelDepth, scaling_factor, DEBUG_FLAG 
     
     sliceDepth = minDepth
     cross_section_frames = []
-    for i in range(19):
+    for i in range(20):
         np_depth_frame_mask = (np_depth_frame <= sliceDepth) * 1.0
         cross_section_frames.append(np_depth_frame_mask)        
         sliceDepth = sliceDepth + sliceInc
@@ -585,15 +585,18 @@ def crossSections(np_depth_frame, fulcrumPixelDepth, scaling_factor, DEBUG_FLAG 
     
     headSphere = None
     maxHeadSlice = None
+    # print("There are {} headSpheres".format(len(headSpheres)))
     if len(headSpheres) > 0:
         headSphereCircularityErrs = []
         for sphere in headSpheres:
             perimeter = cv2.arcLength(sphere[-1], True)
             area = cv2.contourArea(sphere[-1])
             circularity = 4*math.pi*(area/(perimeter*perimeter))
+            # print("circ: {}".format(circularity))
             headSphereCircularityErrs.append(abs(1-circularity))
         
         chosenHeadSphere_idx = headSphereCircularityErrs.index(min(headSphereCircularityErrs))
+        # print("chose {}".format(chosenHeadSphere_idx))
         headSphere = headSpheres[chosenHeadSphere_idx]
         maxHeadSlice = maxSlice_headSpheres[chosenHeadSphere_idx]
     

@@ -14,17 +14,15 @@ class intrinsics_noRS2:
         self.fy = f[1]
         self.coeffs = coeffs
 
-import pyrealsense2 as rs
 import numpy as np
 import cv2
 import datetime
 import time
-import copy
 import sys
 import math
 import os
 import csv
-from tkinter import Frame, Tk
+from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 import libdst
 
@@ -139,9 +137,9 @@ def play(videoFile, intrinsics):
 
     # TESTING
     # ONLY USE WHEN GETTING DATA ON SPECIFIC FRAMES
-    STARTING_FRAME = 13500
-    cap.set(cv2.CAP_PROP_POS_FRAMES, STARTING_FRAME)
-    frameCounter = STARTING_FRAME
+    # STARTING_FRAME = 13500
+    # cap.set(cv2.CAP_PROP_POS_FRAMES, STARTING_FRAME)
+    # frameCounter = STARTING_FRAME
 
 
 
@@ -169,7 +167,7 @@ def play(videoFile, intrinsics):
                 tic = time.perf_counter()
                 np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.perspectiveTransformHandler(intrinsics, np_depth_frame_orig.copy(), perspectivePoints, scaling_factor, None, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG, rs2_functions=False)
                 toc = time.perf_counter()
-                print(f"PT in {toc - tic:0.4f} seconds")
+                # print(f"PT in {toc - tic:0.4f} seconds")
                 # Without Numba or Cupy (iteration-based method), around 2-2.3 secs
                 # Without Numba or Cupy (matrix operations), around 37 secs
                 # With Numba (iteration-based method), around 7-8 secs
@@ -198,16 +196,17 @@ def play(videoFile, intrinsics):
             output_image = libdst.displayDepthPoints(np_depth_frame_scaled, np_depth_color_frame_masked, depthPoints, DEBUG_FLAG)
 
             if len(perspectivePoints) == 4:
+                finalDepthImage = output_image.copy()
         
-                for cons in contours_filteredArea:
-                    finalDepthImage = cv2.drawContours(output_image, cons, -1, (255,0,255), 2)
+                # for cons in contours_filteredArea:
+                #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,255), 2)
                 
                 # if maxHeadSlice is not None:
                 #     for i in range(maxHeadSlice):
                 #         finalDepthImage = cv2.drawContours(finalDepthImage, contours_filteredArea[i], -1, (0,0,255), 2)
                     
-                for cons in contours_filteredCircularity:
-                    finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (0,0,255), 2)
+                # for cons in contours_filteredCircularity:
+                #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (0,255,255), 2)
                     
                 # Display final headsphere contours
                 if headSphere is not None:
@@ -337,6 +336,7 @@ def play(videoFile, intrinsics):
 
                 # for cons in contours_filteredRectangularity:
                 #     finalDepthImage = cv2.drawContours(finalDepthImage, cons, -1, (255,0,0), 1)
+                output_image = finalDepthImage
     
             # output_image = np_depth_frame_sliced
             # print(np_depth_frame_sliced.max())
@@ -372,9 +372,9 @@ def main():
     root.lift()
     root.focus_force()
     # If you want to pick from the NAS, add the positonal argument (initialdir=r"\\134.117.64.31\\Main Storage")
-    videoFile = askopenfilename(filetypes=[("Depth video encoded as RGB files", ".mj2")], parent=root)
-    intrinsicsFile = askopenfilename(filetypes=[("Camera intrinsics information in text file", ".txt")], parent=root)
-    timestampFile = askopenfilename(filetypes=[("Video starting timestamp in text file", ".txt")], parent=root)
+    videoFile = askopenfilename(filetypes=[("Depth video encoded as RGB files", ".mj2")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
+    intrinsicsFile = askopenfilename(filetypes=[("Camera intrinsics information in text file", ".txt")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
+    timestampFile = askopenfilename(filetypes=[("Video starting timestamp in text file", ".txt")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
     root.destroy()
     if not videoFile:
         sys.exit("No video file selected")
