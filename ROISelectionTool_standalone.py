@@ -415,7 +415,7 @@ def bufferVideo(nFrames):
         
     return depth_frames, color_frames, timestamps, depth_frame.get_units()
 
-depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(90)
+depth_frames, color_frames, timestamps, scaling_factor = bufferVideo(5)
     
 # Streaming loop
 frameCounter = random.randrange(0, len(depth_frames))
@@ -613,6 +613,7 @@ while True:
                     if savedMaskToggle:
                         im = Image.fromarray(stageThree_torsoROI)
                         im = im.convert("L")
+                        print(pathToResults)
                         im.save(pathToResults + "torsoROI_auto.jpg")
                         savedMaskToggle = False
                         finalDepthImage_output = finalDepthImage.copy()
