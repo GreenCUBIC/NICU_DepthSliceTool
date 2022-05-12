@@ -35,18 +35,27 @@ Features include:
 # Installation
 [(Back to top)](#table-of-contents)
 
-The tools were tested and confirmed to run with Python 3.8.10. The scripts to encode rosbag files as mp4 or mj2 videos run in MATLAB R2019a. You can install the python dependencies for the tools from the 'requirements.txt' file.
+## Python Scripts/Tools
 
-Pip:
+The tools were tested and confirmed to run with Python 3.8.10.
+
+The prefered way to install the python dependencies is through a Conda environment:
 ```
-pip install -r requirements.txt
+conda env update --file environement.yml
 ```
-Conda:
+
+You can also install the python dependencies for the tools from the 'requirements.txt' file using pip instead:
 ```
-conda install --file requirements.txt
+python -m pip install -r requirements.txt
 ```
+
+## ROSBAG Merge Tools
 
 The scripts found at 'bagmerge/rosbag_merge.py' and 'bagmerge/realsense_rosbag_merge.py' require an active ROS Noetic environment to run properly. Instructions to install on Ubuntu (or WSL) can be found [here](http://wiki.ros.org/noetic/Installation/Ubuntu).
+
+## MATLAB ROSBAG -> Video Encoders
+
+The scripts to encode rosbag files as mp4 or mj2 videos were built and tested in MATLAB R2019a.
 
 # Usage
 [(Back to top)](#table-of-contents)
