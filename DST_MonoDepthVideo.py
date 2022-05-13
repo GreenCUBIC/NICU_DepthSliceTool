@@ -40,6 +40,7 @@ sliderSeek = "Seek (seconds):"
 switchName = "0: Play\n1: Pause"
 
 # Global vars
+saveFolder = None
 slider1Arg = 0
 slider2Arg = 0
 slice1At = 0
@@ -165,7 +166,7 @@ def play(videoFile, intrinsics):
 
             if len(perspectivePoints) == 4:
                 tic = time.perf_counter()
-                np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.perspectiveTransformHandler(intrinsics, np_depth_frame_orig.copy(), perspectivePoints, scaling_factor, None, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG, rs2_functions=False)
+                np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.PTwithCrossSection(intrinsics, np_depth_frame_orig.copy(), perspectivePoints, scaling_factor, None, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG, rs2_functions=False)
                 toc = time.perf_counter()
                 # print(f"PT in {toc - tic:0.4f} seconds")
                 # Without Numba or Cupy (iteration-based method), around 2-2.3 secs
@@ -244,6 +245,7 @@ def play(videoFile, intrinsics):
                     np_ma_torsoROI = np.ma.masked_array(np_depth_frame, mask=roi)
                     if (DEBUG_FLAG):
                         print("torsoROI Mean: {}, Time: {}".format(np_ma_torsoROI.mean(), frameCounter/framerate))
+
 
                     # # Keep this or the one after, not both
                     # if not isPaused and timestamps[frameCounter] != avgTorsoDepth[-1][0]:
@@ -344,25 +346,25 @@ def play(videoFile, intrinsics):
 
             # Exit conditions
             key = cv2.waitKey(1)
-            if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1):
+            if (key == 27) or (cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) != 1) or (frameCounter >= 55000):
                 if len(avgTorsoDepth) > 1:
-                    avgTorsoDepth_filename = os.path.splitext(videoFile)[0] + "_TorsoROIDepth.csv"
+                    avgTorsoDepth_filename = saveFolder + "//" + os.path.splitext(os.path.basename(videoFile))[0] + "_PT_ROI_AvgDepth.csv"
                     with open(avgTorsoDepth_filename, 'w') as f:
                         csvWriter = csv.writer(f)
                         csvWriter.writerow(["Timestamp", "Mean Depth"])
                         csvWriter.writerows(avgTorsoDepth)
                         
-                if PTError is not None:
-                    PTError_filename = os.path.splitext(videoFile)[0] + "_PerspectiveTransformError.csv"
-                    with open(PTError_filename, 'w') as f:
-                        csvWriter = csv.writer(f)
-                        csvWriter.writerow(["Angle (rad)", "Axis", "Absolute Error (%)"])
-                        csvWriter.writerow([PTAngle, PTAxis, PTError])
+                # if PTError is not None:
+                #     PTError_filename = os.path.splitext(videoFile)[0] + "_PerspectiveTransformError.csv"
+                #     with open(PTError_filename, 'w') as f:
+                #         csvWriter = csv.writer(f)
+                #         csvWriter.writerow(["Angle (rad)", "Axis", "Absolute Error (%)"])
+                #         csvWriter.writerow([PTAngle, PTAxis, PTError])
                 cv2.destroyAllWindows()
                 break
 
 def main():
-    global scaling_factor, k, distortionModel, d, init_timestamp, init_epochTime
+    global scaling_factor, k, distortionModel, d, init_timestamp, init_epochTime, saveFolder
 
     root = Tk()
     root.withdraw()
@@ -375,6 +377,7 @@ def main():
     videoFile = askopenfilename(filetypes=[("Depth video encoded as RGB files", ".mj2")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
     intrinsicsFile = askopenfilename(filetypes=[("Camera intrinsics information in text file", ".txt")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
     timestampFile = askopenfilename(filetypes=[("Video starting timestamp in text file", ".txt")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
+    saveFolder = "C:\\Users\\zeinhajjali-admin\\Documents\\depthSliceTool\\bagmerge\\AvgDepths"
     root.destroy()
     if not videoFile:
         sys.exit("No video file selected")

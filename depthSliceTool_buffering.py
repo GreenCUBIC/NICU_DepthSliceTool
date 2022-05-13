@@ -8,6 +8,7 @@ Created on Wed Sep 29 12:36:34 2021
 
 import pyrealsense2 as rs
 import numpy as np
+import pandas as pd
 import cv2
 import datetime
 import time
@@ -20,6 +21,7 @@ import csv
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 import libdst
+from PIL import Image
 
 DSENABLE = "DEPTH_SELECT_ENABLE"
 PTENABLE = "PERSPECTIVE_TRANSFORM_ENABLE"
@@ -39,7 +41,7 @@ root.geometry('0x0+0+0')
 root.deiconify()
 root.lift()
 root.focus_force()
-filename = askopenfilename(filetypes=[("Bag files", ".bag")], parent=root, initialdir=r"\\134.117.64.31\\Main Storage")
+filename = askopenfilename(filetypes=[("Bag files", ".bag")], parent=root)
 root.destroy()
 if not filename:
     sys.exit("No file selected")
@@ -51,7 +53,7 @@ pc = rs.pointcloud()
 # hole_filling = rs.hole_filling_filter()
 
 config = rs.config()
-rs.config.enable_device_from_file(config, filename)
+rs.config.enable_device_from_file(config, filename, repeat_playback=False)
 config.enable_stream(rs.stream.depth)
 config.enable_stream(rs.stream.color)
 
@@ -59,7 +61,7 @@ pipeline = rs.pipeline()
 profile = pipeline.start(config)
 device = profile.get_device()
 playback = device.as_playback()
-playback.seek(datetime.timedelta(seconds=32))
+playback.seek(datetime.timedelta(seconds=31))
 duration = playback.get_duration()
 stream = profile.get_stream(rs.stream.depth).as_video_stream_profile()
 intrinsics = stream.get_intrinsics()
@@ -79,7 +81,7 @@ rotationMatrix = None
 fulcrumPixel_idx = None
 depthPoints = []
 perspectivePoints = []
-avgTorsoDepth = [[0, 0]]
+avgTorsoDepth = [[0, 0, 0]]
 np_depth_frame_prev = None
 np_depth_frame_prev_prev = None
 PTError = None
@@ -147,36 +149,75 @@ cv2.createButton("RGB Overlay (Only on original video)", buttonHandler, RGBENABL
 cv2.createButton("Toggle Depth Selector", buttonHandler, DSENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 cv2.createButton("Perspective Transformation", buttonHandler, PTENABLE, cv2.QT_PUSH_BUTTON|cv2.QT_NEW_BUTTONBAR)
 
-def bufferVideo(nFrames):
+def bufferVideo(nFrames=0):
     global AAtest
+    df = pd.DataFrame(columns=['time', 'depthFrame', 'colorFrame'])
     print("Buffering {} frames".format(nFrames))
     
-    depth_frames = []
-    color_frames = []
-    timestamps = []
+    # depth_frames = []
+    # color_frames = []
+    # timestamps = []
     epochtime = []
-    for i in range(nFrames):
-        frame = pipeline.wait_for_frames()
-        aligned_frame = align.process(frame)
-        depth_frame = aligned_frame.get_depth_frame()
-        color_frame = aligned_frame.get_color_frame()
-        if not depth_frame or not color_frame:
-            continue
+    # frametime = []
+    # for i in range(nFrames):
+    cnt = 0
+    while True:
+        ret, frame = pipeline.try_wait_for_frames()
+        if ret:
+            aligned_frame = align.process(frame)
+            # print(cnt)
+            depth_frame = aligned_frame.get_depth_frame()
+            color_frame = aligned_frame.get_color_frame()
+            if not depth_frame or not color_frame:
+                continue
+
+            etime = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival)
+            # etime = etime.copy()
+            # print(type(etime))
+            if etime not in epochtime:
+                epochtime.append(etime)
+                ftime = etime // 1000
+                # if ftime not in frametime:
+                #     frametime.append(ftime)
+                systemTime = datetime.datetime.fromtimestamp(ftime)
+                # timestamps.append(systemTime)
+                np_depth_frame = np.asanyarray(depth_frame.get_data()).copy()
+                np_color_frame = np.asanyarray(color_frame.get_data()).copy()
+                # print(np_depth_frame)
+                # depth_frames.append(np_depth_frame.copy())
+                # color_frames.append(np_color_frame.copy())
+
+                temporary_df = pd.DataFrame([[etime, np_depth_frame, np_color_frame]], columns=['time', 'depthFrame', 'colorFrame'])
+                df = df.append(temporary_df, ignore_index=True)
+
+            cnt += 1
+            if (cnt == nFrames):
+                break
+
+        elif (nFrames == 0):
+            # print("hello")
+            break
         
-        np_depth_frame = np.asanyarray(depth_frame.get_data())
-        np_color_frame = np.asanyarray(color_frame.get_data())
-        depth_frames.append(np_depth_frame.copy())
-        color_frames.append(np_color_frame.copy())
-        epochtime.append(aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival) // 100)
-        frameTime = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival) // 1000
-        systemTime = datetime.datetime.fromtimestamp(frameTime)
-        timestamps.append(systemTime)
 
         # AAtest = aligned_frame.get_frame_metadata(rs.frame_metadata_value.time_of_arrival)
         
-    return depth_frames, color_frames, timestamps, depth_frame.get_units(), epochtime
+    return depth_frame.get_units(), df
 
-depth_frames, color_frames, timestamps, scaling_factor, epochtime = bufferVideo(90)
+scaling_factor, dataframe = bufferVideo(5)
+dataframe = dataframe.dropna()
+dataframe['time'] = pd.to_datetime(dataframe['time'], unit='ms')
+dataframe = dataframe.set_index(['time'])
+# print(len(dataframe.index))
+dataframe = dataframe.resample('50ms').last()
+dataframe = dataframe.fillna(method='ffill')
+# print(len(dataframe.index))
+# print(dataframe.index)
+# print(dataframe['depthFrame'])
+depth_frames = dataframe['depthFrame'].tolist()
+color_frames = dataframe['colorFrame'].tolist()
+timestamps = dataframe.index.tolist()
+# print(dataframe.index)
+# print(len(epochtimeSecs))
     
 savedTimestamp = None
 # Streaming loop
@@ -204,20 +245,23 @@ while frameCounter < len(depth_frames):
     #     else:
     #         savedTimestamp = timestamps[frameCounter]
 
-        
+    # print(np_depth_frame)
+    # print(np_color_frame)
+    # print(timestamps[frameCounter])
     np_color_frame = np_color_frame[...,::-1]
         
     if len(perspectivePoints) == 4:
-        if(DEBUG_FLAG):
+        if(True or DEBUG_FLAG):
             start_time = time.time()
         
-        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG)
+        np_depth_frame_orig = np_depth_frame.copy()
+        np_depth_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, errs = libdst.PTwithCrossSection(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG)
         PTError, PTAngle, PTAxis = errs
         # np_depth_frame = perspectiveTransformHandler(intrinsics, depth_frame, perspectivePoints)
         
         # np_depth_frame_prev = np_depth_frame.copy()
         
-        if(DEBUG_FLAG):
+        if(True or DEBUG_FLAG):
             print("--- {}s seconds ---".format((time.time() - start_time)))
         
     np_depth_frame_scaled = np_depth_frame * scaling_factor
@@ -273,6 +317,7 @@ while frameCounter < len(depth_frames):
             finalDepthImage = cv2.drawContours(finalDepthImage, torsoSphere, -1, (0,0,255), 2)
             # finalDepthImage = cv2.drawContours(finalDepthImage, [torsoSphere[-1]], -1, (0,0,255), -1)
             # print("Torso contours:")
+            
             for c in torsoSphere:
                 M = cv2.moments(c)
                 cX = int(M["m10"] / M["m00"])
@@ -296,7 +341,8 @@ while frameCounter < len(depth_frames):
             #     avgTorsoDepth.append([timestamps[frameCounter], np_ma_torsoROI.mean()])
 
             if not isPaused:
-                avgTorsoDepth.append([timestamps[frameCounter], np_ma_torsoROI.mean()])
+                print(timestamps[frameCounter].strftime('%Y-%m-%d %H:%M:%S.%f'))
+                avgTorsoDepth.append([timestamps[frameCounter], np_ma_torsoROI.mean(), np_depth_frame_orig.mean()])
         
         # Anthropomorphic checks
         # TURNED OFF TO SAVE TIME AND RECORD AVERAGE TORSO DEPTH
@@ -401,7 +447,7 @@ while frameCounter < len(depth_frames):
             avgTorsoDepth_filename = os.path.splitext(filename)[0] + "_TorsoROIDepth.csv"
             with open(avgTorsoDepth_filename, 'w') as f:
                 csvWriter = csv.writer(f)
-                csvWriter.writerow(["Timestamp", "Mean Depth"])
+                csvWriter.writerow(["Timestamp", "ROI Mean Depth", "Total Mean Depth"])
                 csvWriter.writerows(avgTorsoDepth)
                 
         if PTError is not None:

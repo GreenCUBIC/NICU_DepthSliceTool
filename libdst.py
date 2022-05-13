@@ -266,6 +266,15 @@ def projectPointToPixel(point, ppxy, fxy, coeffs, model):
     pixel[1] = y * fxy[1] + ppxy[1]
 
     return pixel
+
+def PTwithCrossSection(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG = False, rs2_functions = True):
+    np_final_frame, rotationMatrix, fulcrumPixel_idx, fulcrumPixelDepth, PTArray = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG = False, rs2_functions = True);
+    contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = None, None, None, None, None, None, None
+    if np.any(np_final_frame):
+        contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth, scaling_factor, DEBUG_FLAG)
+    
+    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, PTArray
+
         
 def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG = False, rs2_functions = True):
     '''
@@ -458,15 +467,9 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
     np_eroded_depth_frame = cv2.erode(np_dilated_depth_frame, kernel)
     np_final_frame = np_eroded_depth_frame
     
-    
     # fulcrumPoint = rotationMatrix.dot(np.asanyarray(points[fulcrumPixel_idx]).T).T
     # fulcrumPixelDepth = fulcrumPoint[2] * scaling_factor
-    contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = None, None, None, None, None, None, None
-    if np.any(np_final_frame):
-        contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = crossSections(np_final_frame, fulcrumPixelDepth, scaling_factor, DEBUG_FLAG)
-    
-    return np_final_frame, contours, contours_filteredArea, contours_filteredCircularity, headSphere, maxHeadSlice, torsoSphere, rotationMatrix, fulcrumPixel_idx, [PTError, PTAngle, PTAxis]
-    # return np_final_frame
+    return np_final_frame, rotationMatrix, fulcrumPixel_idx, fulcrumPixelDepth, [PTError, PTAngle, PTAxis]
 
 def crossSections(np_depth_frame, fulcrumPixelDepth, scaling_factor, DEBUG_FLAG = False):
     '''
