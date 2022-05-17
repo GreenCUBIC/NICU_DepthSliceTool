@@ -268,6 +268,32 @@ def projectPointToPixel(point, ppxy, fxy, coeffs, model):
     return pixel
 
 def PTwithCrossSection(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG = False, rs2_functions = True):
+    '''
+    Transforms depth frame perspective to face camera head-on then follows cross-sectioning algorithm to find head and torso contours.
+
+    Parameters:
+        intrinsics (list): List of camera intrinsics returned by pyrealsense for the specific camera used.
+        np_depth_frame (NxM Numpy array of floats): Numpy array containing depth values of each pixel.
+        perspectivePoints (list of points): List of manually selected points to be used to calculate rotation matrix and crop image appropratly.
+        scaling_factor (float): Scaling factor to convert arbitrary depth unit to meters.
+        pc (proprietary list of points): Pointcloud representation of the depth frame from the pyrealsense library.
+        rotationMatrix (3x3 Numpy matrix OR None): Numpy array containing calculated rotation matrix.
+        fulcrumPixel_idx (int OR None): Index of middle point used for calculating rotation matrix.
+        isPaused (boolean): Flag showing if the playback is paused on a single frame.
+        np_depth_frame_prev (NxM Numpy array of floats): Numpy array containing depth values of each pixel for the previous frame.
+        np_depth_frame_prev_prev (NxM Numpy array of floats): Numpy array containing depth values of each pixel for the frame before the last.
+        DEBUG_FLAG (boolean): Flag to show/hide debug prints. Defaults to False (Don't show debugging information).
+
+    Returns:
+        np_final_frame (KxL Numpy array of floats): Numpy array conatining depth values of each pixel after perspective transformation.
+        contours (list of lists of points): List of lists, where each child list contains points that make up contours.
+        contours_filteredArea (list of lists of points): Similar to 'contours' with some lists removed according to area criteria.
+        contours_filteredCircularity (list of lists of points): Similar to 'contours_filteredArea' with some lists removed according to shape criteria.
+        headSphere (list of lists of points): All contours of selected head region ordered from smallest to largest.
+        maxHeadSlice (int): Index of top-most depthslice containing a headSphere contour.
+        torsoSphere (list of lists of points): All contours of selected torso region ordered from smallest to largest.
+        [PTError, PTAngle, PTAxis] (List of floats): Array containing information on the calculation of the rotation matrix (error, angle, and axis).
+    '''
     np_final_frame, rotationMatrix, fulcrumPixel_idx, fulcrumPixelDepth, PTArray = perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, scaling_factor, pc, rotationMatrix, fulcrumPixel_idx, isPaused, np_depth_frame_prev, np_depth_frame_prev_prev, PTError, PTAngle, PTAxis, DEBUG_FLAG = False, rs2_functions = True);
     contours, contours_filteredArea, contours_filteredCircularity, headSphere, allHeadSpheres, maxHeadSlice, torsoSphere = None, None, None, None, None, None, None
     if np.any(np_final_frame):
@@ -295,12 +321,9 @@ def perspectiveTransformHandler(intrinsics, np_depth_frame, perspectivePoints, s
 
     Returns:
         np_final_frame (KxL Numpy array of floats): Numpy array conatining depth values of each pixel after perspective transformation.
-        contours (list of lists of points): List of lists, where each child list contains points that make up contours.
-        contours_filteredArea (list of lists of points): Similar to 'contours' with some lists removed according to area criteria.
-        contours_filteredCircularity (list of lists of points): Similar to 'contours_filteredArea' with some lists removed according to shape criteria.
-        headSphere (list of lists of points): All contours of selected head region ordered from smallest to largest.
-        maxHeadSlice (int): Index of top-most depthslice containing a headSphere contour.
-        torsoSphere (list of lists of points): All contours of selected torso region ordered from smallest to largest.
+        rotationMatrix (3x3 Numpy matrix OR None): Numpy array containing calculated rotation matrix.
+        fulcrumPixel_idx (int): Index of the pixel used as the fulcrum of the rotation matrix calculation.
+        fulcrumPixelDepth (float): Depth of the pixel used as the fulcrum of the rotation matrix calculation.
         [PTError, PTAngle, PTAxis] (List of floats): Array containing information on the calculation of the rotation matrix (error, angle, and axis).
     '''
 
