@@ -32,14 +32,13 @@ function [] = save_rgb_images(filepath, patient_id, main_file_name, output_folde
         
         for bag_num=1:num_bag_selections
             bag = bag_selections{1, bag_num};
-            % meta_topic = select(bag, 'Topic', ['/device_0/sensor_0/Depth_0/image/metadata']);  
             data_topic = select(bag, 'Topic', ['/device_0/sensor_0/Depth_0/image/data']);
-            % num_messages = meta_topic.NumMessages;
 
             third_frame_message = readMessages(data_topic, [3]);
-            rgb_image = message_to_rgbimage(third_frame_message{1, 1});
-            imshow(rgb_image);
-            imwrite(rgb_image, strcat(output_folder_path, "p", num2str(patient_id), "\", main_file_name, "_", num2str(image_idx), ".png"));
+            
+            img = readImage(third_frame_message{1, 1});
+            image = uint16(img);
+            imwrite(image, strcat(output_folder_path, "p", num2str(patient_id), "\", main_file_name, "_", num2str(image_idx), ".png"));
             image_idx = image_idx + 1;
         end
         
@@ -51,20 +50,4 @@ function [] = save_rgb_images(filepath, patient_id, main_file_name, output_folde
             break;
         end
     end
-end
-
-function [rgb_image] = message_to_rgbimage(message)
-    col = message.Width;
-    row = message.Height;
-       
-    img = readImage(message);
-        
-    % Initializing all channels
-    red_channel = zeros(row,col,'uint8');
-
-    high = bitshift(img, -8);
-    green_channel = uint8(high);
-    blue_channel = uint8(img - bitshift(high, 8));
-
-    rgb_image = cat(3, red_channel, green_channel, blue_channel);
 end
