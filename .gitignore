@@ -139,3 +139,5 @@ dmypy.json
 *.avi
 *.ini
 *.mat
+*.png
+*.tiff
