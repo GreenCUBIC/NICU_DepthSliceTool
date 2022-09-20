@@ -141,3 +141,5 @@ dmypy.json
 *.mat
 *.png
 *.tiff
+*.index
+*.ckpt.*
