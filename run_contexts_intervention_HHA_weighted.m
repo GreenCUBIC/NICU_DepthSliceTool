@@ -1,4 +1,4 @@
-function [net_Context,info_Context,TP,FP,FN,TN,resultTable] = run_contexts_intervention_HHA(imdsTrain, imdsTest, foldNum) 
+function [net_Context,info_Context,TP,FP,FN,TN,resultTable] = run_contexts_intervention_HHA_weighted(imdsTrain, imdsTest, foldNum) 
 disp(foldNum);
 
 % Load pretrained network
@@ -21,7 +21,7 @@ layersTransfer = net.Layers(1:end-3);
 weight_for_0 = 0.5462147887323944;
 weight_for_1 = 5.90952380952381;
 CLASS_WEIGHT = [ weight_for_0, weight_for_1 ];
-CLASSES = ['noone', 'nurse'];
+CLASSES = ["noone", "nurse"];
 
 numClasses = 2;
 layers = [
