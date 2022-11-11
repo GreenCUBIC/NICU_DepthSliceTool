@@ -1,16 +1,21 @@
-prePT_path = 'C:\Users\Zalamaan\Documents\Repos\depthSliceTool\bagmerge\InterventionDetectionFiles\FirstFrameDepthRGB_origData_prePT\';
-PT_path = 'C:\Users\Zalamaan\Documents\Repos\depthSliceTool\bagmerge\InterventionDetectionFiles\FirstFrameDepthRGB_origData_PT\';
-allPts = [1, 2, 5, 6, 8, 9, 10, 11, 13, 14, 15, 16, 17, 21:34];
+prePT_path = 'bagmerge\InterventionDetectionFiles\FirstFrameDepthRGB\';
+PT_path = 'bagmerge\InterventionDetectionFiles\FirstFrameDepth_PT\';
+% allPts = [1, 2, 5, 6, 8, 9, 10, 11, 13, 14, 15, 16, 17, 21:34];
+allPts = [21:34];
 Pts_data = cell(length(allPts)*2, 6);
 cell_num = 0;
 
+% for i = 1:1
 for i = 1:length(allPts)
+    disp(prePT_path)
+    disp(allPts(i))
     uniqueFileNames = find_unique_file_names(prePT_path, allPts(i));
+    disp(uniqueFileNames)
     for file_num = 1:length(uniqueFileNames)
         cell_num = cell_num + 1;
         Pts_data{cell_num, 1} = allPts(i);
         Pts_data{cell_num, 2} = uniqueFileNames(file_num);
-        [Pts_data{cell_num, 3}, Pts_data{cell_num, 4}, Pts_data{cell_num, 5}, Pts_data{cell_num, 6}] = getPTVars(prePT_path, Pts_data{cell_num, 1}, Pts_data{cell_num, 2});
+        [Pts_data{cell_num, 3}, Pts_data{cell_num, 4}, Pts_data{cell_num, 5}, Pts_data{cell_num, 6}] = getPTVars(prePT_path, Pts_data{cell_num, 1}, Pts_data{cell_num, 2}, PT_path);
     end
 end
 
@@ -23,13 +28,15 @@ end
 
 function [] = transformPerspective_allFiles(srcPath, dstPath, patientID, filename, rotationMatrix, K, D, distortionModel)
     noone_folder_path = strcat(srcPath, 'p', num2str(patientID), '\noone\');
-    noone_part_files = dir(strcat(noone_folder_path, filename, '_part_*.jpg'));
-    noone_main_file = dir(strcat(noone_folder_path, filename, '.jpg'));
+    noone_part_files = dir(strcat(noone_folder_path, filename, '_*.png'));
+    % noone_main_file = dir(strcat(noone_folder_path, filename, '.png'));
     nurse_folder_path = strcat(srcPath, 'p', num2str(patientID), '\nurse\');
-    nurse_part_files = dir(strcat(nurse_folder_path, filename, '_part_*.jpg'));
-    nurse_main_file = dir(strcat(nurse_folder_path, filename, '.jpg'));
-    noone_files = [noone_main_file; noone_part_files];
-    nurse_files = [nurse_main_file; nurse_part_files];
+    nurse_part_files = dir(strcat(nurse_folder_path, filename, '_*.png'));
+    % nurse_main_file = dir(strcat(nurse_folder_path, filename, '.png'));
+    % noone_files = [noone_main_file; noone_part_files];
+    % nurse_files = [nurse_main_file; nurse_part_files];
+    noone_files = noone_part_files;
+    nurse_files = nurse_part_files;
 
     parfor i = 1:length(noone_files)
         curr_nooneFile = noone_files(i);
@@ -78,16 +85,25 @@ function [] = transformPerspective(srcFile, dstFile, rotationMatrix, K, D, disto
     depthFrame_transformed(~any(depthFrame_transformed, 2), :) = [];
     depthFrame_transformed(:, ~any(depthFrame_transformed, 1)) = [];
 
-    imwrite(depthFrame_transformed, dstFile);
+    SE = strel('rectangle', [3, 3]);
+    depthFrame_closed = imclose(depthFrame_transformed, SE);
+
+    depthFrame_final = uint16(depthFrame_closed);
+    imwrite(depthFrame_final, dstFile);
 
 end
 
-function [rotationMatrix, K, D, distortionModel] = getPTVars(srcPath, patientID, filename)
-    img = imread(strcat(srcPath, 'p', num2str(patientID), '\noone\', filename, '.jpg'));
+function [rotationMatrix, K, D, distortionModel] = getPTVars(srcPath, patientID, filename, dstPath)
+    try
+        img = imread(strcat(srcPath, 'p', num2str(patientID), '\nurse\', filename, '_0.png'));
+    catch ME
+        img = imread(strcat(srcPath, 'p', num2str(patientID), '\noone\', filename, '_0.png'));
+    end
     intrinsicsFile = dir(strcat(srcPath, 'p', num2str(patientID), '\*.txt'));
     intrinsicsFilename = char(strcat(intrinsicsFile.folder, "\", intrinsicsFile.name));
     [scalingFactor, K, distortionModel, D] = parseIntrinsics(intrinsicsFilename);
-    fig = imshow(img);
+    shownImg = double(img) / double(max(img(:)));
+    fig = imshow(shownImg, 'Colormap', jet);
 
     PTpoints = zeros(4, 3);
     PTpixels = zeros(4, 3);
@@ -102,27 +118,28 @@ function [rotationMatrix, K, D, distortionModel] = getPTVars(srcPath, patientID,
     end
     close();
 
-    [rotationMatrix, fulcrumPixel_idx] = calculateRotationMatrix(PTpoints);
+    [rotationMatrix, PTError] = calculateRotationMatrix(PTpoints);
+
+    resultsFilename = strcat(dstPath, 'p', num2str(patientID), '\PTError.txt');
+    fid = fopen(resultsFilename, 'w');
+    fprintf(fid, num2str(PTError));
+    fclose(fid);
 end
 
 function [unique_file_names] = find_unique_file_names(filepath, patient_id)
-    noone_files = dir(strcat(filepath, 'p', num2str(patient_id), '\noone\*.jpg'));
+    noone_files = dir(strcat(filepath, 'p', num2str(patient_id), '\noone\*.png'));
     noone_file_names =  string(extractfield(noone_files, 'name'));
-    noone_file_names_with_ext = noone_file_names(arrayfun(@(x) ~contains(x,'_part_'), noone_file_names));
-    unique_noone_file_names = arrayfun(@(x) erase(x,'.jpg'),noone_file_names_with_ext);
-    nurse_files = dir(strcat(filepath, 'p', num2str(patient_id), '\nurse\*.jpg'));
+    noone_file_names_with_ext = noone_file_names(arrayfun(@(x) contains(x,'_0.png'), noone_file_names));
+    unique_noone_file_names = arrayfun(@(x) erase(x,'_0.png'),noone_file_names_with_ext);
+    nurse_files = dir(strcat(filepath, 'p', num2str(patient_id), '\nurse\*.png'));
     nurse_file_names =  string(extractfield(nurse_files, 'name'));
-    nurse_file_names_with_ext = nurse_file_names(arrayfun(@(x) ~contains(x,'_part_'), nurse_file_names));
-    unique_file_names = arrayfun(@(x) erase(x,'.jpg'),nurse_file_names_with_ext);
-    for i=1:length(unique_noone_file_names)
-        TF = matches(unique_file_names, unique_noone_file_names(i));
-        if sum(TF) == 0
-            unique_file_names = [unique_file_names, unique_noone_file_names(i)];
-        end
-    end
+    nurse_file_names_with_ext = nurse_file_names(arrayfun(@(x) contains(x,'_0.png'), nurse_file_names));
+    unique_nurse_file_names = arrayfun(@(x) erase(x,'_0.png'),nurse_file_names_with_ext);
+    unique_file_names = unique([unique_noone_file_names, unique_nurse_file_names])
+    
 end
 
-function [rotationMatrix, fulcrumPixel_idx] = calculateRotationMatrix(PTpoints)
+function [rotationMatrix, PTError] = calculateRotationMatrix(PTpoints)
     rMatrices = cell(1, 4);
     tpDiffs = cell(1, 4);
     tpComparision = cell(1, 4);
@@ -145,14 +162,14 @@ function [rotationMatrix, fulcrumPixel_idx] = calculateRotationMatrix(PTpoints)
 
 
         testPoints = (rotationMatrix * PTpoints')';
-        testPointDiff = testPoints(mod(pointIndex + 1, 4) + 1, 2) - testPoints(pointIndex, 2);
-        tpComparision{pointIndex} = testPoints(pointIndex, 2);
+        testPointDiff = testPoints(mod(pointIndex + 1, 4) + 1, 3) - testPoints(pointIndex, 3);
+        tpComparision{pointIndex} = testPoints(pointIndex, 3);
         tpDiffs{pointIndex} = abs(testPointDiff);
     end
         
     [tpDiff, tpDiff_idx] = min([tpDiffs{:}]);
-    fulcrumPixel_idx = mod(tpDiff_idx + 2, 4) + 1;
     rotationMatrix = rMatrices{tpDiff_idx};
+    PTError = (tpDiffs{tpDiff_idx} / tpComparision{tpDiff_idx}) * 100;
 end
 
 function [pixel] = projectPointToPixel(point, K, coeffs, model)
