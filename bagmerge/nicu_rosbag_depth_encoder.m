@@ -19,7 +19,7 @@ function [] = nicu_rosbag_depth_encoder(filepath, output_path, PATIENT_IDS, part
             end
         catch Error
             errorText = getReport(Error);
-            disp(errorText);
+%             disp(errorText);
         end
     end
     toc
@@ -37,12 +37,12 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
     video_writer = VideoWriter(char(strcat(output_path, main_file_name, "_depth",".mj2")),'Archival');
     video_writer.FrameRate = frame_rate;
     open(video_writer);
-    disp(video_writer.LosslessCompression)
+%     disp(video_writer.LosslessCompression)
     absolute_video_start_time = NaN;
     intrinsics_saved = NaN;
     encoded_video_sec = 0;
-    progress_msg = strcat("Encoding video for patient ", num2str(patient_id), " ... ");
-    progress_bar = waitbar(0, progress_msg);
+%     progress_msg = strcat("Encoding video for patient ", num2str(patient_id), " ... ");
+%     progress_bar = waitbar(0, progress_msg);
     batch_size = min(part_end - part_start, batch_size);
     [bag_selections, num_bag_selections, total_num_files] = read_rosbag_files(filepath, patient_id, main_file_name, part_start, batch_size);
     
@@ -88,7 +88,18 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
             if isnan(absolute_video_start_time)
                 % Convert unix time_stamp to EST timezone date string
                 absolute_video_start_time = time_stamps(1);
+                % TIMEZONE ISSUE
+                % For bagfiles recorded after Daylight Saving adjustments,
+                % be sure to use the correct line below.
+                % For EST use the line below
                 absolute_video_start_time_str = datestr((time_stamps(1) - 5*3600*1000)/(86400 * 1000) + datenum(1970,1,1),'yyyy-mm-dd HH:MM:SS.FFF');
+                % For EDT (Daylight Savings) use the line below
+                % absolute_video_start_time_str = datestr((time_stamps(1) - 4*3600*1000)/(86400 * 1000) + datenum(1970,1,1),'yyyy-mm-dd HH:MM:SS.FFF');
+%                 disp(absolute_video_start_time_str);
+%                 disp(time_stamps(1));
+%                 disp((time_stamps(1) - 5*3600*1000)/(86400 * 1000));
+%                 disp((time_stamps(1) - 5*3600*1000)/(86400 * 1000) + datenum(1970,1,1));
+%                 disp(datenum(datetime('now')));
                 fileID = fopen(char(strcat(output_path,main_file_name,".txt")),'w');
                 fprintf(fileID,'recordingStart=%s\n',absolute_video_start_time_str);
                 fclose(fileID);
@@ -101,6 +112,7 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
             absolute_time_stamp_sec = round(absolute_time_stamp/1000);
             
             frame_indices = 1:length(absolute_time_stamp_sec);
+            
             carried_messages = [];
             while encoded_video_sec <= max(absolute_time_stamp_sec)
                 if isfile(strcat('carried_messages', num2str(patient_id), '.mat'))
@@ -109,11 +121,17 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
                 end
                 frames_for_sec = frame_indices(absolute_time_stamp_sec == encoded_video_sec);
                 num_frames_in_sec = length(frames_for_sec);
+%                 if (num_frames_in_sec < frame_rate)
+%                     disp(frame_rate);
+%                     disp(frames_for_sec);
+%                     disp(num_frames_in_sec);
+%                 end
                 
                 if ~isempty(carried_messages)
                     additional_messages = readMessages(data_topic, frames_for_sec);
                     merged_messages = [carried_messages;additional_messages];
                     num_merged_messages = length(merged_messages); 
+%                     disp(num_merged_messages);
                     merged_frames_indices = 1:num_merged_messages;
                     down_sampled_indices = interp1(merged_frames_indices, 1:num_merged_messages/frame_rate:num_merged_messages, 'nearest');
                     data_messages = merged_messages(down_sampled_indices);
@@ -122,8 +140,18 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
                     carried_messages = readMessages(data_topic, frames_for_sec);
                     save(strcat('carried_messages', num2str(patient_id), '.mat'), 'carried_messages');
                     break;
+                elseif (num_frames_in_sec < frame_rate)
+                    multiplier = ceil(frame_rate/num_frames_in_sec);
+                    multiFrames = zeros(1, (multiplier*num_frames_in_sec));
+                    for i=1:multiplier*num_frames_in_sec
+                        multiFrames(i) = frames_for_sec(ceil(i/multiplier));
+                    end
+                    num_multiFrames = length(multiFrames);
+                    down_sampled_indices = interp1(multiFrames, 1:(num_multiFrames/frame_rate):num_multiFrames, 'nearest');
+                    data_messages = readMessages(data_topic, down_sampled_indices);
                 else
                     down_sampled_indices = interp1(frames_for_sec, 1:num_frames_in_sec/frame_rate:num_frames_in_sec, 'nearest');
+                    
                     %Now read the actual frames from the data topic
                     data_messages = readMessages(data_topic, down_sampled_indices);
                 end
@@ -147,7 +175,7 @@ function [] = encode_video(filepath, patient_id, main_file_name, output_path, pa
         part_start =  part_start + num_bag_selections;
         if part_start < part_end
             [bag_selections, num_bag_selections] = read_rosbag_files(filepath, patient_id, main_file_name, part_start, batch_size);
-            waitbar(part_start/min(part_end,total_num_files), progress_bar, strcat(progress_msg, num2str(part_start),"/", num2str(total_num_files)));
+%             waitbar(part_start/min(part_end,total_num_files), progress_bar, strcat(progress_msg, num2str(part_start),"/", num2str(total_num_files)));
         else
             break;
         end
