@@ -1,30 +1,33 @@
-prePT_path = 'bagmerge\InterventionDetectionFiles\FirstFrameDepthRGB\';
-PT_path = 'bagmerge\InterventionDetectionFiles\FirstFrameDepth_PT\';
-% allPts = [1, 2, 5, 6, 8, 9, 10, 11, 13, 14, 15, 16, 17, 21:34];
-allPts = [21:34];
+prePT_path = 'C:\Users\Zalamaan\Documents\Repos\NICU_Data\DepthFrameFullPrec_prePT\';
+PT_path = 'C:\Users\Zalamaan\Documents\Repos\NICU_Data\ThesisPT\';
+% allPts = [1, 2, 5, 6, 8, 9, 10, 11, 13, 15, 16, 17, 21:24, 26:34];
+allPts = [36:38];
+% allPts = [90:94];
 Pts_data = cell(length(allPts)*2, 6);
 cell_num = 0;
 
 % for i = 1:1
-for i = 1:length(allPts)
-    disp(prePT_path)
-    disp(allPts(i))
-    uniqueFileNames = find_unique_file_names(prePT_path, allPts(i));
-    disp(uniqueFileNames)
-    for file_num = 1:length(uniqueFileNames)
-        cell_num = cell_num + 1;
-        Pts_data{cell_num, 1} = allPts(i);
-        Pts_data{cell_num, 2} = uniqueFileNames(file_num);
-        [Pts_data{cell_num, 3}, Pts_data{cell_num, 4}, Pts_data{cell_num, 5}, Pts_data{cell_num, 6}] = getPTVars(prePT_path, Pts_data{cell_num, 1}, Pts_data{cell_num, 2}, PT_path);
+for j = 4:5
+    for i = 1:length(allPts)
+        disp(prePT_path)
+        disp(allPts(i))
+        uniqueFileNames = find_unique_file_names(prePT_path, allPts(i));
+        disp(uniqueFileNames)
+        for file_num = 1:length(uniqueFileNames)
+            cell_num = cell_num + 1;
+            Pts_data{cell_num, 1} = allPts(i);
+            Pts_data{cell_num, 2} = uniqueFileNames(file_num);
+            [Pts_data{cell_num, 3}, Pts_data{cell_num, 4}, Pts_data{cell_num, 5}, Pts_data{cell_num, 6}] = getPTVars(prePT_path, Pts_data{cell_num, 1}, Pts_data{cell_num, 2}, PT_path, j);
+        end
     end
 end
 
-for i = 1:cell_num
-    disp(strcat("Patient Number ", num2str(Pts_data{i, 1})))
-    tic
-    transformPerspective_allFiles(prePT_path, PT_path, Pts_data{i, 1}, Pts_data{i, 2}, Pts_data{i, 3}, Pts_data{i, 4}, Pts_data{i, 5}, Pts_data{i, 6});
-    toc
-end
+% for i = 1:cell_num
+%     disp(strcat("Patient Number ", num2str(Pts_data{i, 1})))
+%     tic
+%     transformPerspective_allFiles(prePT_path, PT_path, Pts_data{i, 1}, Pts_data{i, 2}, Pts_data{i, 3}, Pts_data{i, 4}, Pts_data{i, 5}, Pts_data{i, 6});
+%     toc
+% end
 
 function [] = transformPerspective_allFiles(srcPath, dstPath, patientID, filename, rotationMatrix, K, D, distortionModel)
     noone_folder_path = strcat(srcPath, 'p', num2str(patientID), '\noone\');
@@ -93,7 +96,7 @@ function [] = transformPerspective(srcFile, dstFile, rotationMatrix, K, D, disto
 
 end
 
-function [rotationMatrix, K, D, distortionModel] = getPTVars(srcPath, patientID, filename, dstPath)
+function [rotationMatrix, K, D, distortionModel] = getPTVars(srcPath, patientID, filename, dstPath, rep)
     try
         img = imread(strcat(srcPath, 'p', num2str(patientID), '\nurse\', filename, '_0.png'));
     catch ME
@@ -118,11 +121,11 @@ function [rotationMatrix, K, D, distortionModel] = getPTVars(srcPath, patientID,
     end
     close();
 
-    [rotationMatrix, PTError] = calculateRotationMatrix(PTpoints);
+    [rotationMatrix, PTError, PTAngle] = calculateRotationMatrix(PTpoints);
 
-    resultsFilename = strcat(dstPath, 'p', num2str(patientID), '\PTError.txt');
+    resultsFilename = strcat(dstPath, 'p', num2str(patientID), '\_', filename,'_PTError', num2str(rep), '.txt');
     fid = fopen(resultsFilename, 'w');
-    fprintf(fid, num2str(PTError));
+    fprintf(fid, sprintf('PTError: %s\nPTAngle: %s', num2str(PTError), num2str(PTAngle)));
     fclose(fid);
 end
 
@@ -139,8 +142,9 @@ function [unique_file_names] = find_unique_file_names(filepath, patient_id)
     
 end
 
-function [rotationMatrix, PTError] = calculateRotationMatrix(PTpoints)
+function [rotationMatrix, PTError, PTAngle] = calculateRotationMatrix(PTpoints)
     rMatrices = cell(1, 4);
+    rAngles = cell(1, 4);
     tpDiffs = cell(1, 4);
     tpComparision = cell(1, 4);
     for pointIndex = 1:4
@@ -159,6 +163,7 @@ function [rotationMatrix, PTError] = calculateRotationMatrix(PTpoints)
                         -rAxis(2), rAxis(1), 0];
         rotationMatrix = (cos(rAngle)*eye(3)) + ((sin(rAngle)*rAxisCMatrix) +((1-cos(rAngle))*(rAxis' * rAxis)));
         rMatrices{pointIndex} = rotationMatrix;
+        rAngles{pointIndex} = rAngle;
 
 
         testPoints = (rotationMatrix * PTpoints')';
@@ -170,6 +175,7 @@ function [rotationMatrix, PTError] = calculateRotationMatrix(PTpoints)
     [tpDiff, tpDiff_idx] = min([tpDiffs{:}]);
     rotationMatrix = rMatrices{tpDiff_idx};
     PTError = (tpDiffs{tpDiff_idx} / tpComparision{tpDiff_idx}) * 100;
+    PTAngle = rAngles{tpDiff_idx};
 end
 
 function [pixel] = projectPointToPixel(point, K, coeffs, model)

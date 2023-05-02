@@ -65,10 +65,11 @@ def main():
         
         dice = lambda auto, manual : np.sum(auto[manual==1])*2.0 / (np.sum(auto) + np.sum(manual))
         
-        # dice_head = dice(np_headROI_auto, np_headROI_manual)
+        dice_head = dice(np_headROI_auto, np_headROI_manual)
         dice_torso = dice(np_torsoROI_auto, np_torsoROI_manual)
         # print(dice_head)
-        print("DICE: \n{}\n".format(dice_torso))
+        print(f'Dice Torso: {dice_torso}')
+        print(f'Dice Head: {dice_head}')
         
         # falsePos = lambda auto, manual : np.sum(auto[manual==0]) / np.sum(auto)
         
@@ -80,7 +81,9 @@ def main():
         jaccard = lambda d : (d / (2 - d))
 
         jaccard_torso = jaccard(dice_torso)
-        print("Jaccard: \n{}\n".format(jaccard_torso))
+        jaccard_head = jaccard(dice_head)
+        print(f'Jaccard Torso: {jaccard_torso}')
+        print(f'Jaccard Head: {jaccard_head}')
 
         print(np.sum(np_torsoROI_auto))
         print(np.sum(np_torsoROI_manual))

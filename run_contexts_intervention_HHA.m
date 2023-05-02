@@ -1,27 +1,27 @@
-function [net_Context,info_Context,TP,FP,FN,TN,resultTable] = run_contexts_intervention_D(imdsTrain, imdsTest, foldNum) 
+function [net_Context,info_Context,TP,FP,FN,TN,resultTable] = run_contexts_intervention_HHA(imdsTrain, imdsTest, foldNum) 
 disp(foldNum);
 
 % Load pretrained network
 net = vgg16;
  
-% First image input size
+% % First image input size
 inputSize = net.Layers(1).InputSize;
-
-% Modify numchannels 3-->1
-inputSize(3) = 1;
-
-W = net.Layers(2, 1).Weights;   W(:,:,3,:) = []; W(:,:,2,:) = [];
-B = net.Layers(2, 1).Bias;      
+% 
+% % Modify numchannels 3-->1
+% inputSize(3) = 1;
+% 
+% W = net.Layers(2, 1).Weights;   W(:,:,3,:) = []; W(:,:,2,:) = [];
+% B = net.Layers(2, 1).Bias;      
 
 
 
 % Modify last 3 layers
-layersTransfer = net.Layers(3:end-3);
+layersTransfer = net.Layers(1:end-3);
 
 numClasses = 2;
 layers = [
-    imageInputLayer(inputSize,'Name','input')
-    convolution2dLayer(3,64,'NumChannels',1,'Stride',1,'Padding',1,'Weights',W,'Bias',B,'Name','conv1')
+%     imageInputLayer(inputSize,'Name','input')
+%     convolution2dLayer(3,64,'NumChannels',1,'Stride',1,'Padding',1,'Weights',W,'Bias',B,'Name','conv1')
     layersTransfer
     fullyConnectedLayer(numClasses,'WeightLearnRateFactor',10,'BiasLearnRateFactor',10)
     softmaxLayer
@@ -59,9 +59,9 @@ augimdsTrain = augmentedImageDatastore(inputSize(1:2),imdsTrain,...
 
 % Training options
 options = trainingOptions('sgdm', ...
-    'MiniBatchSize',32, ...
-    'MaxEpochs',20, ...
-    'InitialLearnRate',1e-5, ...
+    'MiniBatchSize',20, ...
+    'MaxEpochs',1, ...
+    'InitialLearnRate',1e-4, ...
     'Shuffle','every-epoch', ...
     'ValidationData',augimdsTest, ...
     'ValidationFrequency',5, ...
@@ -118,8 +118,8 @@ hold on
 scatter(1:numPoints, info_Context.ValidationAccuracy,'black', '.')
 legend('TrainingAccuracy' , 'ValidationAccuracy')
 hold off
-figName_Acc = strcat('TrainingAccuracy_',string(foldNum),'.png');
-saveas(gcf , figName_Acc)
+% figName_Acc = strcat('TrainingAccuracy_',string(foldNum),'.png');
+% saveas(gcf , figName_Acc)
 
 figure;
 plot(1:numPoints, info_Context.TrainingLoss, 'Color', [0.8500 0.3250 0.0980])
@@ -127,8 +127,8 @@ hold on
 scatter(1:numPoints, info_Context.ValidationLoss,'black', '.')
 legend('TrainingLoss' , 'ValidationLoss')
 hold off
-figName_Loss = strcat('TrainingLoss_', string(foldNum),'.png');
-saveas(gcf , figName_Loss)
+% figName_Loss = strcat('TrainingLoss_', string(foldNum),'.png');
+% saveas(gcf , figName_Loss)
 
 end
 
